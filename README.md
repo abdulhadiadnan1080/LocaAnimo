@@ -198,6 +198,10 @@ docs/                      design notes and media
 - [ ] Music scoring with [ACE-Step](https://github.com/ace-step/ACE-Step-1.5)
 - [ ] NVIDIA support (Wan 2.2, Index-AniSora) for full-motion episodes
 
+## Contributing
+
+Contributions are very welcome: bug reports, ideas, example scripts and code. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get set up, and look for issues labelled **good first issue**. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Credits
 
 **Hadi's LocaAnimo** is an open-source project by **Abdul Hadi Adnan**.

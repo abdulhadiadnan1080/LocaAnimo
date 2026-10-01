@@ -1,0 +1,22 @@
+name: Feature request
+description: An idea to make LocaAnimo better.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the feature and the problem it solves for you.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: Ideas for how it could work
+      description: Optional. Models, approaches or examples from other tools.
+  - type: checkboxes
+    id: local
+    attributes:
+      label: Stays local
+      options:
+        - label: This can work without cloud APIs (LocaAnimo runs 100% on-device)

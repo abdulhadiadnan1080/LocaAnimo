@@ -1,0 +1,39 @@
+name: Bug report
+description: Something went wrong while making an episode or using the studio.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead? Screenshots or a frame from the video help.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: The script you used (or a small one that shows the problem) and the command or button you pressed.
+      placeholder: |
+        1. scripts/make_episode.sh examples/the_lost_kite.yaml kite
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The relevant lines from projects/<name>/log.txt (and any traceback from the terminal).
+      render: text
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and memory
+      placeholder: e.g. MacBook Pro M3 Pro, 18 GB, macOS 26.3
+    validations:
+      required: true
+  - type: dropdown
+    id: video
+    attributes:
+      label: Is LTX-Video (AI motion) installed?
+      options: ["Yes", "No", "Not sure"]
