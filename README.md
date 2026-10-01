@@ -146,7 +146,7 @@ Measured on a **MacBook Pro M3 Pro (18 GB)**:
 | One AI motion clip (2.7 s at 768×448) | 41–52 s |
 | Face finding + review (whole episode) | ~1.5 min |
 | Compositing + encoding (1 min of video) | ~40 s |
-| **The Lost Kite** (57 s, 4 scenes, 2 AI shots), from script to final cut | **~19 min** |
+| **The Lost Kite** (57 s, 4 scenes, 2 AI shots), from script to final cut | **~5 min** |
 
 Drawing the art takes most of the time. It's cached, so changing dialogue or voices and re-rendering takes about 4 minutes.
 
