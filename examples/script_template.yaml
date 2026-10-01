@@ -1,0 +1,84 @@
+# LocaAnimo episode script
+# ---------------------------------------------------------------
+# Write your story here scene by scene. The pipeline turns it into
+# shots, art, animation, voices, music and the final .mp4.
+#
+# Rules of thumb:
+#   - Every character and location gets a short `id` you reuse below.
+#   - `look` fields are image prompts: comma-separated visual tags work best.
+#   - Each scene is a list of `beats`, played in order. A beat is ONE of:
+#       line:      a character speaks
+#       action:    something happens (set `big: true` for AI-animated action)
+#       narration: a narrator voice-over
+#       camera:    an explicit camera shot (optional; otherwise automatic)
+#       pause:     silence, in seconds
+#   - Fields marked (optional) can be left out.
+# ---------------------------------------------------------------
+
+episode:
+  title: "The Last Wave"
+  style: anime_tv            # anime_tv | chibi | cartoon
+  resolution: 1080p          # 720p | 1080p
+  music: true                # generate background music (optional, default true)
+  subtitles: true            # burn in subtitles (optional, default true)
+
+characters:
+  - id: kai
+    name: Kai
+    look: "teenage boy, messy black hair, orange hoodie, blue eyes, slim build"
+    age: teen                # child | teen | adult | elder
+    gender: male             # male | female | neutral
+    voice: auto              # auto, or a Kokoro voice id like am_adam (optional)
+
+  - id: mira
+    name: Mira
+    look: "teenage girl, long silver hair in a ponytail, white surf jacket, green eyes"
+    age: teen
+    gender: female
+    voice: auto
+
+locations:
+  - id: beach
+    look: "empty beach at sunset, big waves, orange sky, wooden pier"
+  - id: pier
+    look: "end of a wooden pier, close to the water, sunset, seagulls"
+
+scenes:
+  - id: s1
+    location: beach
+    time: sunset              # day | sunset | night (optional)
+    mood: calm                # music mood: calm | tense | happy | sad | epic (optional)
+    beats:
+      - camera: establishing  # wide shot of the location to open the scene
+      - narration: "Every summer, the biggest wave came on the last day."
+      - action: "Kai walks along the shore carrying a surfboard"
+        characters: [kai]
+      - line: { who: kai, text: "Today's the day. I can feel it.", emotion: determined }
+      - action: "Mira runs up behind him, waving"
+        characters: [mira]
+        sfx: [footsteps_sand]
+      - line: { who: mira, text: "Kai! You're not seriously going out there?", emotion: worried }
+      - line: { who: kai, text: "Watch me.", emotion: confident, gesture: points }
+
+  - id: s2
+    location: beach
+    mood: epic
+    beats:
+      - action: "A giant wave rises over the ocean"
+        sfx: [wave_roar]
+        camera: low_angle
+      - action: "Kai paddles hard, then leaps up and rides the giant wave, spray flying"
+        characters: [kai]
+        big: true             # AI-generated motion for this moment (keep these rare: 4-6 per 10 min)
+      - line: { who: mira, text: "He's actually doing it!", emotion: amazed }
+      - pause: 1.0
+
+# ---------------------------------------------------------------
+# Reference
+#   emotion: neutral | happy | sad | angry | surprised | worried | determined |
+#            confident | amazed | scared | embarrassed
+#   gesture (optional): points | waves | nods | shakes_head | shrugs |
+#                       crosses_arms | fist_pump | facepalm
+#   camera: establishing | wide | medium | close_up | over_shoulder |
+#           low_angle | high_angle | pan_left | pan_right | zoom_in | shake
+# ---------------------------------------------------------------

@@ -1,0 +1,19 @@
+# model weights (~50 GB): fetched by scripts/download_models.py
+models/
+# reference clones of upstream projects
+gitrepos/
+# generated episodes and per-episode working files
+outputs/
+projects/
+cache/
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+# logs from model downloads
+*.log
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/

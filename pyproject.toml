@@ -1,0 +1,24 @@
+[project]
+name = "locaanimo"
+version = "0.1.0"
+description = "Hadi's LocaAnimo: turn a written story into a fully voiced, animated episode, 100% locally on a Mac."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Abdul Hadi Adnan" }]
+requires-python = ">=3.11,<3.12"
+keywords = ["animation", "anime", "cartoon", "text-to-video", "local-ai", "apple-silicon", "mlx", "stable-diffusion"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: MacOS",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Artistic Software",
+]
+
+[project.scripts]
+locaanimo-studio = "locaanimo.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"locaanimo.third_party.depth_anything_v2" = ["LICENSE"]

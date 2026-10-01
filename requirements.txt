@@ -1,0 +1,40 @@
+# Hadi's LocaAnimo: tested on macOS 26 (Apple M3 Pro, 18 GB), Python 3.11.
+# Install with: scripts/setup.sh  (or: uv pip install -r requirements.txt)
+
+# image, video and vision models (PyTorch on Apple MPS)
+torch==2.14.1
+torchvision==0.29.1
+diffusers==0.40.0
+transformers==5.18.0
+accelerate==1.15.0
+peft==0.21.2
+safetensors==0.8.0
+sentencepiece==0.2.2
+protobuf==7.36.2
+timm==1.0.30
+kornia==0.8.3
+einops==0.8.2
+onnxruntime==1.30.0
+rtmlib==0.0.16
+
+# voices (Kokoro) and its English pronunciation dictionary
+kokoro==0.9.4
+misaki[en]==0.9.4
+spacy==3.8.16
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+soundfile==0.14.0
+
+# local vision-language model (Qwen3.5): face finding, free-text import, quality review
+mlx==0.32.3
+mlx-lm==0.32.0
+mlx-vlm==0.7.4
+
+# glue
+numpy==2.4.6
+scipy==1.17.1
+scikit-image==0.26.0
+opencv-python==5.0.0.93
+pillow==12.3.0
+pydantic==2.13.5
+pyyaml==6.0.3
+huggingface-hub==1.33.0

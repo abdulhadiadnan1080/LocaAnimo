@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hadi's LocaAnimo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2317130f'/><circle cx='16' cy='16' r='11' fill='none' stroke='%23c8693f' stroke-width='2'/><text x='16' y='20.5' font-size='11' text-anchor='middle' fill='%23c8693f' font-family='Georgia'>LA</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand" title="Hadi's LocaAnimo"><div class="monogram">LA</div><div class="brand-name">Hadi's<br>LocaAnimo</div></div>
+      <nav>
+        <button class="nav active" data-view="story" title="Build your story">
+          <svg viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM13 4h5.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H13z"/></svg>
+          <span>Story</span>
+        </button>
+        <button class="nav" data-view="script" title="Paste or edit the script as text">
+          <svg viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg>
+          <span>Script</span>
+        </button>
+        <button class="nav" data-view="library" title="Your finished episodes">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5z"/></svg>
+          <span>Library</span>
+        </button>
+      </nav>
+      <div class="rail-foot">
+        <button class="nav small" id="new-btn" title="Start a blank episode">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          <span>New</span>
+        </button>
+        <div class="engine" id="engine" title="Voice engine status"><i></i><span>Voices</span></div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <input id="title" class="title-input" placeholder="Untitled episode" spellcheck="false" autocomplete="off">
+        <button id="status" class="pill" type="button">Checking…</button>
+        <button id="storyboard" class="ghost" type="button" title="Quick animatic: storyboard cards with the real voices, in seconds">Storyboard</button>
+        <button id="create" class="primary" type="button" title="Full episode: art, animation, AI action shots, review (about 15–20 min)">
+          <svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg>
+          <span>Create episode</span>
+        </button>
+      </header>
+
+      <div class="views">
+        <section id="view-story" class="view active">
+          <div id="banner" class="banner" hidden></div>
+
+          <div class="section">
+            <div class="section-head"><h2>Look &amp; feel</h2><p>How it looks and sounds.</p></div>
+            <div id="feel" class="feel card"></div>
+          </div>
+
+          <div class="section">
+            <div class="section-head"><h2>Cast</h2><p>Describe each look in short tags. Hover a voice to hear it.</p></div>
+            <div id="cast" class="grid"></div>
+          </div>
+
+          <div class="section">
+            <div class="section-head"><h2>Places</h2><p>Where the scenes take place.</p></div>
+            <div id="places" class="grid"></div>
+          </div>
+
+          <div class="section">
+            <div class="section-head"><h2>Scenes</h2><p>The story, beat by beat, in order.</p></div>
+            <div id="scenes"></div>
+            <button class="add-scene" id="add-scene" type="button">+ Add scene</button>
+          </div>
+        </section>
+
+        <section id="view-script" class="view">
+          <div class="script-modes">
+            <div class="seg" id="script-mode">
+              <button type="button" data-mode="text" class="on">Plain text</button>
+              <button type="button" data-mode="yaml">Structured (YAML)</button>
+            </div>
+            <span class="muted" id="mode-hint">Paste your story in any format, and the fields fill in automatically.</span>
+          </div>
+
+          <div class="script-layout" id="mode-text">
+            <div class="editor card">
+              <div class="editor-bar">
+                <span class="editor-title">Your story</span>
+                <span id="text-state" class="muted"></span>
+                <div class="spacer"></div>
+                <button class="ghost" id="text-example" type="button">Paste example</button>
+                <button class="ghost" id="text-clear" type="button">Clear</button>
+              </div>
+              <textarea id="story-text" class="prose" spellcheck="true" placeholder="Paste your whole script here: title, characters and what they look like, places, and every scene with its dialogue and actions. Any format works."></textarea>
+              <div class="fill-bar">
+                <div class="fill-progress" id="fill-progress" hidden>
+                  <div class="progress"><i id="fill-bar"></i></div>
+                  <span id="fill-msg" class="muted"></span>
+                </div>
+                <div class="spacer"></div>
+                <button class="ghost" id="fill-cancel" type="button" hidden>Cancel</button>
+                <button class="primary" id="fill" type="button"><span>✨ Fill in fields</span></button>
+              </div>
+            </div>
+            <aside class="guide card" id="text-guide"></aside>
+          </div>
+
+          <div class="script-layout" id="mode-yaml" hidden>
+            <div class="editor card">
+              <div class="editor-bar">
+                <span class="editor-title">script.yaml</span>
+                <span id="yaml-state" class="muted"></span>
+                <div class="spacer"></div>
+                <button class="ghost" id="load-file" type="button">Open file…</button>
+                <button class="ghost" id="download" type="button">Download</button>
+                <button class="ghost" id="use-example" type="button">Use example</button>
+                <input type="file" id="file-input" accept=".yaml,.yml,.json,.txt" hidden>
+              </div>
+              <textarea id="yaml" spellcheck="false" autocomplete="off" placeholder="Paste a script here…"></textarea>
+            </div>
+            <aside class="guide card" id="guide"></aside>
+          </div>
+        </section>
+
+        <section id="view-library" class="view">
+          <div class="section-head"><h2>Library</h2><p>Every episode you've made, saved in the <code>outputs/</code> folder.</p></div>
+          <div id="library" class="library"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="dock" class="dock" hidden></div>
+  <div id="issues" class="popover issues" hidden></div>
+  <div id="voice-pop" class="popover voice-pop" hidden></div>
+  <dialog id="player" class="player">
+    <video id="player-video" controls playsinline></video>
+    <div class="player-bar">
+      <div><strong id="player-title"></strong><span id="player-meta" class="muted"></span></div>
+      <div class="player-actions">
+        <button class="ghost" id="player-reveal" type="button">Show in Finder</button>
+        <button class="ghost" id="player-close" type="button">Close</button>
+      </div>
+    </div>
+  </dialog>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

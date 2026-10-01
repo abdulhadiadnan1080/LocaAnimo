@@ -1,0 +1,75 @@
+# The Lost Kite: a gentle 1-minute cartoon in 4 scenes.
+episode:
+  title: "The Lost Kite"
+  style: cartoon
+  resolution: 720p
+
+characters:
+  - id: leo
+    name: Leo
+    look: "little boy, curly brown hair, big brown eyes, yellow t-shirt, blue shorts, red sneakers"
+    age: child
+    gender: male
+  - id: rose
+    name: Grandma Rose
+    look: "grandmother, white hair in a bun, round glasses, green cardigan, long brown skirt, kind smile"
+    age: elder
+    gender: female
+
+locations:
+  - id: park
+    look: "sunny city park, green grass, big oak trees, blue sky with fluffy clouds, flower beds"
+  - id: hill
+    look: "grassy hilltop, one tall tree, wide view over a small town, wildflowers"
+
+scenes:
+  - id: s1
+    location: park
+    time: day
+    mood: happy
+    beats:
+      - camera: establishing
+      - narration: "Leo had built his very first kite, and today was the perfect windy day."
+      - line: { who: leo, text: "Look, Grandma! It's flying!", emotion: happy }
+      - line: { who: rose, text: "Hold on tight, Leo. The wind is strong today.", emotion: worried }
+      - action: "A gust of wind snaps the string and the kite shoots up into the sky"
+        characters: [leo]
+        big: true
+        sfx: [whoosh]
+      - line: { who: leo, text: "No! Come back!", emotion: scared }
+
+  - id: s2
+    location: park
+    time: day
+    mood: sad
+    beats:
+      - action: "Leo sits on the grass, looking at the empty sky"
+        characters: [leo]
+      - line: { who: leo, text: "I worked on it all week. Now it's gone.", emotion: sad }
+      - line: { who: rose, text: "Kites never go far. Let's go and look for it together.", emotion: confident }
+
+  - id: s3
+    location: hill
+    time: day
+    mood: calm
+    beats:
+      - camera: establishing
+      - action: "Leo and Grandma climb to the top of the hill"
+        characters: [leo, rose]
+        sfx: [footsteps]
+      - line: { who: leo, text: "Grandma, look! It's stuck in that tree!", emotion: surprised, gesture: points }
+      - line: { who: rose, text: "Well, would you look at that. It waited for us.", emotion: happy }
+
+  - id: s4
+    location: hill
+    time: sunset
+    mood: happy
+    beats:
+      - camera: establishing
+      - narration: "With Grandma's help, the kite flew again, higher than ever."
+      - action: "Leo and Grandma fly the kite together as it soars above the town at sunset"
+        characters: [leo, rose]
+        big: true
+      - line: { who: leo, text: "This is the best day ever!", emotion: happy }
+      - line: { who: rose, text: "Just remember to hold on tight.", emotion: happy }
+      - pause: 1.0

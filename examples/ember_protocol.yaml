@@ -1,0 +1,90 @@
+# Ember Protocol: a 4-scene neon-city chase.
+episode:
+  title: "Ember Protocol"
+  style: anime_tv
+  resolution: 720p
+
+characters:
+  - id: rin
+    name: Rin
+    look: "short messy red hair, amber eyes, black courier jacket with orange stripes, fingerless gloves, cargo pants"
+    age: teen
+    gender: female
+  - id: kaito
+    name: Kaito
+    look: "spiky white hair, scar over left eye, grey eyes, long black coat, high collar, black pants"
+    age: adult
+    gender: male
+  - id: sora
+    name: Sora
+    look: "grey beard, round glasses, bald head, brown hooded robe over a sweater"
+    age: elder
+    gender: male
+
+locations:
+  - id: rooftop
+    look: "skyscraper rooftop in a neon cyberpunk city, rain, glowing signs, water tanks, antennas, city skyline"
+  - id: hideout
+    look: "abandoned subway station turned hacker hideout, flickering lights, old monitors, tangled cables, graffiti"
+
+scenes:
+  - id: s1
+    location: rooftop
+    time: night
+    mood: tense
+    beats:
+      - camera: establishing
+      - narration: "Neo-Kyoto, 3 a.m. Someone stole the Ember chip. Everyone wants it back."
+      - action: "Rin sprints across the wet rooftop, clutching a glowing chip"
+        characters: [rin]
+        sfx: [footsteps, siren]
+      - line: { who: rin, text: "Come on, come on. Just one more roof!", emotion: scared }
+      - action: "Kaito steps out of the shadows, blocking her way"
+        characters: [kaito]
+      - line: { who: kaito, text: "Hand it over, Rin. This isn't a game.", emotion: angry, gesture: points }
+      - line: { who: rin, text: "Then stop playing guard dog for them!", emotion: determined }
+      - action: "Rin leaps across the gap between two skyscrapers as neon signs blur past"
+        characters: [rin]
+        big: true
+
+  - id: s2
+    location: hideout
+    time: night
+    mood: tense
+    beats:
+      - camera: establishing
+      - action: "Rin stumbles into the hideout, soaked and breathing hard"
+        characters: [rin]
+        sfx: [footsteps]
+      - line: { who: sora, text: "You actually got it. Are you hurt?", emotion: worried }
+      - line: { who: rin, text: "Kaito was there. He knew exactly where I'd be.", emotion: sad }
+      - line: { who: sora, text: "Then someone told him. Plug it in, quickly.", emotion: determined }
+      - pause: 0.8
+
+  - id: s3
+    location: hideout
+    time: night
+    mood: epic
+    beats:
+      - action: "The steel door bursts open with a crash"
+        sfx: [impact]
+        camera: shake
+      - line: { who: kaito, text: "Nobody move!", emotion: angry }
+      - line: { who: rin, text: "You followed me? Brother, how could you?", emotion: angry }
+      - line: { who: kaito, text: "They'll kill you for that chip. I came to stop them, not you.", emotion: sad }
+      - line: { who: sora, text: "Drones on the roof. They tracked him here!", emotion: scared }
+
+  - id: s4
+    location: rooftop
+    time: sunset
+    mood: epic
+    beats:
+      - camera: establishing
+      - narration: "Dawn broke over the city. There was nowhere left to run."
+      - line: { who: rin, text: "If we go down, we go down together.", emotion: determined }
+      - line: { who: kaito, text: "Not today. Stay behind me!", emotion: confident }
+      - action: "Kaito throws himself in front of Rin as a drone fires a blinding blast of light"
+        characters: [kaito, rin]
+        big: true
+      - line: { who: rin, text: "Kaito!", emotion: scared }
+      - pause: 1.2
