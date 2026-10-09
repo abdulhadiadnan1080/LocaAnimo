@@ -13,8 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from locaanimo.art import (Artist, action_prompt, character_negative, character_prompt,  # noqa: E402
-                            location_prompt, seed_for)
+from locaanimo.art import (Artist, action_negative, action_prompt, character_negative, character_prompt,  # noqa: E402
+                            clean_character, location_prompt, seed_for)
 from locaanimo.paths import PROJECTS  # noqa: E402
 from locaanimo.schema import ActionBeat, load_script  # noqa: E402
 
@@ -43,9 +43,7 @@ for key in dict.fromkeys(f"{s.location}@{s.time}" for s in script.scenes):
     jobs.append((f"bg_{key}", lambda loc=loc, tod=tod: artist.draw(
         location_prompt(locs[loc].look, tod, style), seed_for(loc), 1344, 768, negative="1girl, 1boy, people, person")))
 for c in script.characters:
-    jobs.append((f"char_{c.id}", lambda c=c: artist.draw(
-        character_prompt(c.look, c.gender, style, age=c.age), seed_for(c.id), 832, 1216,
-        negative=character_negative(c.age))))
+    jobs.append((f"char_{c.id}", lambda c=c: draw_character(c)))
 n = 0
 for s in script.scenes:
     for b in s.beats:
@@ -54,7 +52,18 @@ for s in script.scenes:
             looks = [f"{chars[c].look}" for c in b.characters[:2]]
             jobs.append((f"action_{n}", lambda b=b, s=s, looks=looks, n=n: artist.draw(
                 action_prompt(b.action, looks, s.time, style), seed_for(f"action_{n}"), 1344, 768,
-                negative="child, shota, loli, chibi")))
+                negative=action_negative([chars[c].age for c in b.characters],
+                                        [c.age for c in script.characters]))))
+
+def draw_character(c):
+    """A character fully inside the frame: redrawn if hair or body runs off the edge."""
+    img, tries = clean_character(lambda seed: artist.draw(
+        character_prompt(c.look, c.gender, style, age=c.age), seed, 832, 1216,
+        negative=character_negative(c.age, c.look)), seed_for(c.id))
+    if tries > 1:
+        log(f"art: {c.name} ran off the edge of the picture, redrawn ({tries} tries)")
+    return img
+
 
 todo = [(name, fn) for name, fn in jobs if not (out / f"{name}.png").exists()]
 log(f"art: {len(jobs)} images planned, {len(todo)} to draw")

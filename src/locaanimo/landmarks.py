@@ -25,7 +25,10 @@ from .paths import MODELS
 LLM_DIR = MODELS / "llm" / "Qwen3.5-4B-4bit"
 QUESTION = ("Locate this anime character's mouth, left eye and right eye. Reply with JSON only: "
             '{"mouth": [x1, y1, x2, y2], "left_eye": [x1, y1, x2, y2], "right_eye": [x1, y1, x2, y2]}')
+FACE_QUESTION = ("Locate this character's whole face, from the top of the head to the chin, including any "
+                 'beard. Reply with JSON only: {"face": [x1, y1, x2, y2]}')
 HEAD_SIZE = 448  # the head crop is downscaled to this; fewer image tokens = much faster
+OVERVIEW = 640   # the whole figure, downscaled, for finding the face first
 
 
 def head_crop(img: Image.Image) -> tuple[Image.Image, tuple[int, int, int, int]]:
@@ -48,7 +51,47 @@ def head_crop(img: Image.Image) -> tuple[Image.Image, tuple[int, int, int, int]]
     return img.crop(box).resize((HEAD_SIZE, HEAD_SIZE), Image.LANCZOS), box
 
 
-def _parse(text: str) -> dict | None:
+def face_crop(model, proc, img: Image.Image, tmp: str) -> tuple[Image.Image, tuple] | None:
+    """Ask the model where the face is on the whole figure, then crop a square around it.
+    Unlike a fixed "top of the figure" crop, this works for any proportions: chibi heads,
+    tiny heads in full-body art, mouths hidden in big beards."""
+    from mlx_vlm import generate
+    from mlx_vlm.prompt_utils import apply_chat_template
+    w, h = img.size
+    side = max(w, h)
+    square = Image.new("RGB", (side, side), img.getpixel((2, 2)))   # pad, so both axes share one scale
+    square.paste(img, ((side - w) // 2, (side - h) // 2))
+    square.resize((OVERVIEW, OVERVIEW), Image.LANCZOS).save(tmp)
+    prompt = apply_chat_template(proc, model.config, FACE_QUESTION, num_images=1, enable_thinking=False)
+    raw = _parse(getattr(generate(model, proc, prompt, image=[tmp], max_tokens=60, verbose=False, temperature=0.0),
+                         "text", ""), key="face")
+    f = raw and raw.get("face")
+    if not f or len(f) != 4:
+        return None
+    k, ox, oy = side / 1000, (side - w) // 2, (side - h) // 2
+    fx0, fy0, fx1, fy1 = f[0] * k - ox, f[1] * k - oy, f[2] * k - ox, f[3] * k - oy
+    fw, fh = fx1 - fx0, fy1 - fy0
+    if fw < 0.06 * w or fh < 0.04 * h or fw > w or fh > h:      # nonsense answer: let the caller fall back
+        return None
+    crop_side = int(min(w, h, 1.2 * max(fw, fh)))
+    cx, cy = (fx0 + fx1) / 2, (fy0 + fy1) / 2
+    x0 = int(min(max(0, cx - crop_side / 2), w - crop_side))
+    y0 = int(min(max(0, cy - crop_side / 2), h - crop_side))
+    box = (x0, y0, x0 + crop_side, y0 + crop_side)
+    return img.crop(box).resize((HEAD_SIZE, HEAD_SIZE), Image.LANCZOS), box
+
+
+def _mouth_plausible(boxes: dict) -> bool:
+    """A mouth sits clearly below the eyes: roughly 0.4 to 1.7 eye-distances lower."""
+    (lx0, ly0, lx1, ly1), (rx0, ry0, rx1, ry1) = boxes["left_eye"], boxes["right_eye"]
+    eye_dist = abs((lx0 + lx1) / 2 - (rx0 + rx1) / 2)
+    eye_y = (ly0 + ly1 + ry0 + ry1) / 4
+    mx0, my0, mx1, my1 = boxes["mouth"]
+    drop = ((my0 + my1) / 2 - eye_y) / max(1.0, eye_dist)
+    return 0.4 <= drop <= 1.7
+
+
+def _parse(text: str, key: str = "mouth") -> dict | None:
     """Accept both the requested {"mouth": [...]} shape and Qwen's native grounding
     format [{"bbox_2d": [...], "label": "mouth"}, ...]."""
     match = re.search(r"[\[{].*[\]}]", text, re.S)
@@ -61,7 +104,7 @@ def _parse(text: str) -> dict | None:
     if isinstance(data, list):
         data = {str(d.get("label", "")).lower().replace(" ", "_"): d.get("bbox_2d")
                 for d in data if isinstance(d, dict)}
-    return data if isinstance(data, dict) and "mouth" in data else None
+    return data if isinstance(data, dict) and key in data else None
 
 
 def locate(paths: list[str]) -> dict:
@@ -73,7 +116,7 @@ def locate(paths: list[str]) -> dict:
     tmp = "/tmp/locaanimo_head.png" if not os.environ.get("TMPDIR") else os.path.join(os.environ["TMPDIR"], "locaanimo_head.png")
     for path in paths:
         img = Image.open(path).convert("RGB")
-        crop, (x0, y0, x1, _) = head_crop(img)
+        crop, (x0, y0, x1, _) = face_crop(model, proc, img, tmp) or head_crop(img)
         crop.save(tmp)
         out = generate(model, proc, prompt, image=[tmp], max_tokens=120, verbose=False, temperature=0.0)
         raw = _parse(getattr(out, "text", out))
@@ -83,8 +126,17 @@ def locate(paths: list[str]) -> dict:
         scale = (x1 - x0) / 1000          # the model answers in 0-1000 relative coordinates
         boxes = {k: [x0 + v[0] * scale, y0 + v[1] * scale, x0 + v[2] * scale, y0 + v[3] * scale]
                  for k, v in raw.items() if k in ("mouth", "left_eye", "right_eye") and v and len(v) == 4}
-        if "left_eye" in boxes and "right_eye" in boxes:
-            boxes["mouth"] = _refine_mouth(model, proc, img, boxes, tmp) or boxes["mouth"]
+        if "left_eye" in boxes and "right_eye" in boxes and "mouth" in boxes:
+            if not _mouth_plausible(boxes):
+                # too close to the eyes (usually the nose): look again where a mouth should be
+                (lx0, ly0, lx1, ly1), (rx0, ry0, rx1, ry1) = boxes["left_eye"], boxes["right_eye"]
+                ex, ey = (lx0 + lx1 + rx0 + rx1) / 4, (ly0 + ly1 + ry0 + ry1) / 4
+                d = abs((lx0 + lx1) / 2 - (rx0 + rx1) / 2)
+                boxes["mouth"] = [ex - 0.3 * d, ey + 0.8 * d, ex + 0.3 * d, ey + 1.0 * d]
+            refined = _refine_mouth(model, proc, img, boxes, tmp)
+            if refined:
+                trial = {**boxes, "mouth": refined}
+                boxes["mouth"] = refined if _mouth_plausible(trial) else boxes["mouth"]
         results[path] = boxes
     return results
 

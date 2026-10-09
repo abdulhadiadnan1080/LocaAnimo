@@ -10,16 +10,19 @@ characters:
     look: "short messy red hair, amber eyes, black courier jacket with orange stripes, fingerless gloves, cargo pants"
     age: teen
     gender: female
+    voice: "teenage girl, quick and fiery, a bit sarcastic, breathless when scared"
   - id: kaito
     name: Kaito
     look: "spiky white hair, scar over left eye, grey eyes, long black coat, high collar, black pants"
     age: adult
     gender: male
+    voice: "young man, low and controlled, cold on the surface, cracks when emotional"
   - id: sora
     name: Sora
     look: "grey beard, round glasses, bald head, brown hooded robe over a sweater"
     age: elder
     gender: male
+    voice: "old man, gravelly and kind, slow and calm, a little wheezy"
 
 locations:
   - id: rooftop
@@ -42,7 +45,7 @@ scenes:
       - action: "Kaito steps out of the shadows, blocking her way"
         characters: [kaito]
       - line: { who: kaito, text: "Hand it over, Rin. This isn't a game.", emotion: angry, gesture: points }
-      - line: { who: rin, text: "Then stop playing guard dog for them!", emotion: determined }
+      - line: { who: rin, text: "Then stop playing guard dog for them! [chuckle]", emotion: determined }
       - action: "Rin leaps across the gap between two skyscrapers as neon signs blur past"
         characters: [rin]
         big: true
@@ -71,7 +74,7 @@ scenes:
         camera: shake
       - line: { who: kaito, text: "Nobody move!", emotion: angry }
       - line: { who: rin, text: "You followed me? Brother, how could you?", emotion: angry }
-      - line: { who: kaito, text: "They'll kill you for that chip. I came to stop them, not you.", emotion: sad }
+      - line: { who: kaito, text: "[sigh] They'll kill you for that chip. I came to stop them, not you.", emotion: sad }
       - line: { who: sora, text: "Drones on the roof. They tracked him here!", emotion: scared }
 
   - id: s4
@@ -86,5 +89,5 @@ scenes:
       - action: "Kaito throws himself in front of Rin as a drone fires a blinding blast of light"
         characters: [kaito, rin]
         big: true
-      - line: { who: rin, text: "Kaito!", emotion: scared }
+      - line: { who: rin, text: "[gasp] Kaito!", emotion: scared }
       - pause: 1.2

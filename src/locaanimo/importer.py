@@ -54,7 +54,7 @@ SYSTEM = f"""You convert a story or screenplay written in plain text into a JSON
 Output ONLY one JSON object (no markdown, no commentary) with this shape:
 {{
   "episode": {{"title": "...", "style": "anime_tv"}},
-  "characters": [{{"id": "kai", "name": "Kai", "look": "...", "age": "teen", "gender": "male"}}],
+  "characters": [{{"id": "kai", "name": "Kai", "look": "...", "age": "teen", "gender": "male", "voice": "..."}}],
   "locations": [{{"id": "beach", "look": "..."}}],
   "scenes": [{{"id": "s1", "location": "beach", "time": "sunset", "mood": "calm", "beats": [ ... ]}}],
   "notes": ["short notes about anything you had to guess or invent"]
@@ -83,6 +83,11 @@ Rules:
 - ids are short lowercase words (letters, digits, underscores), e.g. "kai", "old_pier". Every "who" and every "characters" entry must be a character id; every scene "location" must be a location id.
 - "look" is comma-separated visual tags (hair, eyes, clothes, build, age) taken from the text. If the text gives none, invent a short fitting look and say so in notes.
 - A location "look" is comma-separated visual tags for the place, including its lighting.
+- "voice" describes how the character sounds, in a few words: age and gender, texture, pace and personality,
+  e.g. "teenage boy, bright and cocky, talks fast" or "old woman, warm and gentle, slow". Use what the text says
+  about their voice; otherwise infer it from their personality and the way they talk.
+- Lines may keep sound cues in square brackets when the text implies them: [laugh] [chuckle] [sigh] [gasp]
+  [cough] [groan] [sniff]. Don't invent them otherwise.
 - Infer age, gender, time and mood from the text; if unsure use adult, neutral, day, calm.
 - Use "big": true for at most one spectacular action moment per two minutes of story (fights, chases, transformations, huge stunts).
 - Start each scene with {{"camera": "establishing"}} unless the text asks for a specific shot.
@@ -100,8 +105,8 @@ MR. ODA: Looking for something, little one?"""
 EXAMPLE_OUT = {
     "episode": {"title": "Lost Kitten", "style": "anime_tv"},
     "characters": [
-        {"id": "hana", "name": "Hana", "look": "little girl, short brown hair, yellow raincoat, red boots, cheerful face", "age": "child", "gender": "female"},
-        {"id": "oda", "name": "Mr. Oda", "look": "old man, grey beard, round glasses, brown shopkeeper apron", "age": "elder", "gender": "male"},
+        {"id": "hana", "name": "Hana", "look": "little girl, short brown hair, yellow raincoat, red boots, cheerful face", "age": "child", "gender": "female", "voice": "young girl, bright and sweet, a little shaky when worried"},
+        {"id": "oda", "name": "Mr. Oda", "look": "old man, grey beard, round glasses, brown shopkeeper apron", "age": "elder", "gender": "male", "voice": "old man, kind and gravelly, slow and calm"},
     ],
     "locations": [{"id": "rainy_street", "look": "narrow city street at night, heavy rain, glowing shop signs, wet pavement, wooden bench"}],
     "scenes": [{"id": "s1", "location": "rainy_street", "time": "night", "mood": "sad", "beats": [

@@ -10,11 +10,13 @@ characters:
     look: "little boy, curly brown hair, big brown eyes, yellow t-shirt, blue shorts, red sneakers"
     age: child
     gender: male
+    voice: "young boy, bright and excited, talks fast"
   - id: rose
     name: Grandma Rose
     look: "grandmother, white hair in a bun, round glasses, green cardigan, long brown skirt, kind smile"
     age: elder
     gender: female
+    voice: "grandmother, warm and gentle, soft British accent, unhurried"
 
 locations:
   - id: park
@@ -58,7 +60,7 @@ scenes:
         characters: [leo, rose]
         sfx: [footsteps]
       - line: { who: leo, text: "Grandma, look! It's stuck in that tree!", emotion: surprised, gesture: points }
-      - line: { who: rose, text: "Well, would you look at that. It waited for us.", emotion: happy }
+      - line: { who: rose, text: "[chuckle] Well, would you look at that. It waited for us.", emotion: happy }
 
   - id: s4
     location: hill
@@ -70,6 +72,6 @@ scenes:
       - action: "Leo and Grandma fly the kite together as it soars above the town at sunset"
         characters: [leo, rose]
         big: true
-      - line: { who: leo, text: "This is the best day ever!", emotion: happy }
+      - line: { who: leo, text: "This is the best day ever! [laugh]", emotion: happy }
       - line: { who: rose, text: "Just remember to hold on tight.", emotion: happy }
       - pause: 1.0

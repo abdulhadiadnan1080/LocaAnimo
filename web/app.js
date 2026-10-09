@@ -14,6 +14,7 @@ let S = null;                 // the episode script
 let OPT = null;               // enum options from the server
 let VOICES = [];              // Kokoro English voices
 let VOICE_MISSING = null;     // why voices can't run, if anything
+let EXPRESSIVE = false;       // the expressive voice models are installed
 let lastCheck = null;         // latest validation result
 let job = null;               // the render job shown in the dock
 let yamlText = "";            // what's in the editor
@@ -162,10 +163,6 @@ function changed({ rerender } = {}) {
 
 // ---------- voices -----------------------------------------------------------------
 
-const voiceById = (id) => VOICES.find((v) => v.id === id);
-const voiceLabel = (id) => voiceById(id)?.name || id;
-const voiceMeta = (id) => { const v = voiceById(id); return v ? `${v.accent} ${v.gender}` : ""; };
-
 function sampleFor(charId) {
   const line = [...allBeats()].find((b) => b.line?.who === charId && b.line.text?.trim());
   if (line) return { text: line.line.text, emotion: line.line.emotion || "neutral" };
@@ -173,8 +170,10 @@ function sampleFor(charId) {
   return { text: `Hi, I'm ${c?.name || "here"}. Nice to meet you!`, emotion: "neutral" };
 }
 function narratorSample() {
-  const n = [...allBeats()].find((b) => b.narration?.trim());
-  return { text: n ? n.narration : "Every story begins with a single moment.", emotion: "neutral" };
+  const sc = S.scenes.find((x) => x.beats.some((b) => b.narration?.trim()));
+  const n = sc?.beats.find((b) => b.narration?.trim());
+  return { text: n ? n.narration : "Every story begins with a single moment.",
+           emotion: `narration:${sc?.mood || "calm"}` };
 }
 
 // One audio element for the whole app; a newer preview always wins.
@@ -213,99 +212,80 @@ async function speak(voice, text, emotion = "neutral", el = null) {
 
 function stopAudio() { audioToken++; audio.pause(); if (playingEl) playingEl.classList.remove("playing", "loading"); playingEl = null; }
 
-// Voice picker: a button that opens a list; hovering a voice plays it.
+// Voice field: describe the voice in words; Preview designs it (first time) and speaks.
 const voicePainters = new Set();
+// Ready-made voices for the dropdown: each is just a description, so it can be tweaked after.
+const VOICE_PRESETS = [
+  ["Kids", [
+    ["Cheerful little boy", "young boy, bright and excited, talks fast"],
+    ["Sweet little girl", "young girl, sweet and curious, high and soft"]]],
+  ["Teens", [
+    ["Fiery teen girl", "teen girl, quick and fiery, confident"],
+    ["Shy teen girl", "teen girl, soft-spoken and shy, gentle"],
+    ["Cocky teen boy", "teenage boy, cocky and energetic, a little sarcastic"],
+    ["Calm teen boy", "teenage boy, calm and low, thoughtful"]]],
+  ["Adults", [
+    ["Warm young woman", "young woman, warm and friendly, clear"],
+    ["Cool, sharp woman", "adult woman, cool and composed, sharp and precise"],
+    ["Heroic young man", "young man, bold and heroic, strong and clear"],
+    ["Brooding young man", "young man, low and controlled, cold on the surface"],
+    ["Gruff tough guy", "adult man, deep and gruff, rough edges"],
+    ["Nervous nerd", "young man, fast and nervous, slightly high-pitched"]]],
+  ["Elders", [
+    ["Kind grandmother", "grandmother, warm and gentle, unhurried"],
+    ["Wise old man", "old man, deep and wise, slow and calm"],
+    ["Grumpy old man", "old man, gravelly and grumpy, dry humor"]]],
+  ["Villains", [
+    ["Cold villain", "adult man, smooth and menacing, quiet and cold"],
+    ["Wicked queen", "adult woman, regal and cruel, slow and icy"]]],
+  ["Narrators", [
+    ["Storyteller", "warm, rich mature storyteller voice, clear and expressive"],
+    ["Epic trailer voice", "deep, powerful male narrator, epic movie-trailer voice"],
+    ["Gentle bedtime narrator", "soft, gentle female narrator, soothing bedtime-story voice"]]],
+];
 
-function voicePicker({ get, set, autoPick, sample }) {
-  const btn = h("button.voice-btn", { type: "button" });
-  const play = h("span.play", { title: "Listen" }, icon("play"));
-  const name = h("span.v-name");
-  const sub = h("span.v-sub");
-  btn.append(play, h("span", null, name, h("br"), sub), h("span.chev", null, icon("chev")));
+function voicePicker(current, onpick) {
+  const known = new Set([...VOICE_PRESETS.flatMap(([, list]) => list.map(([, d]) => d)), ...VOICES.map((v) => v.id)]);
+  const fast = [...VOICES].sort((a, b) => (b.featured - a.featured) || a.name.localeCompare(b.name));
+  const el = h("select.voice-pick", { title: "Pick a ready-made voice; it plays right away",
+      onchange: (e) => { if (e.target.value) onpick(e.target.value === "__auto" ? "" : e.target.value); } },
+    h("option", { value: "__auto" }, "Auto (from age and gender)"),
+    h("option", { value: "", disabled: true }, "Custom description"),
+    VOICE_PRESETS.map(([group, list]) => h("optgroup", { label: `Expressive · ${group}` },
+      list.map(([label, desc]) => h("option", { value: desc }, label)))),
+    fast.length ? h("optgroup", { label: "Fast voices (quicker, less expressive)" },
+      fast.map((v) => h("option", { value: v.id }, `${v.name} · ${v.accent} ${v.gender}`))) : null);
+  el.sync = (v) => { el.value = !v || v === "auto" ? "__auto" : known.has(v) ? v : ""; };
+  el.sync(current);
+  return el;
+}
 
-  const current = () => (get() === "auto" ? autoPick() : get());
+const VOICE_TRAITS = ["warm", "bright", "raspy", "deep", "soft-spoken", "energetic", "calm", "sarcastic", "childlike", "gravelly"];
+
+function voiceField({ get, set, autoDesc, sample }) {
+  const input = h("textarea.field", { rows: 2, value: get() === "auto" ? "" : get(),
+    oninput: (e) => { set(e.target.value.trim() || "auto"); picker.sync(e.target.value.trim()); changed(); } });
+  const play = h("button.say-voice", { type: "button", title: "Hear this voice" }, icon("play"), h("span", null, "Preview"));
+  const picker = voicePicker(get(), (v) => { input.value = v; set(v || "auto"); changed(); play.click(); });
+  const chips = h("div.voice-chips", null, VOICE_TRAITS.map((t) => h("button.chip", { type: "button", onclick: () => {
+    const cur = input.value.trim();
+    if (cur.toLowerCase().split(/,\s*/).includes(t)) return;
+    input.value = cur ? `${cur}, ${t}` : `${autoDesc() || "adult"}, ${t}`;
+    set(input.value); picker.sync(input.value); changed();
+  } }, t)));
   function paint() {
-    const v = get(), real = current();
-    name.textContent = v === "auto" ? (real ? `Auto · ${voiceLabel(real)}` : "Auto-cast") : voiceLabel(v);
-    sub.textContent = real ? voiceMeta(real) : "Picked from age and gender";
+    input.placeholder = `Auto: ${autoDesc() || "built from age and gender"}`;
   }
   paint();
   voicePainters.add(paint);
-
-  play.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const real = current();
-    if (!real) return toast("Fix the script issues first, so a voice can be auto-cast");
+  play.addEventListener("click", () => {
+    const voice = get() !== "auto" ? get() : autoDesc();
+    if (!voice) return toast("Fix the script issues first, so a voice can be described automatically");
     const s = sample();
-    speak(real, s.text, s.emotion, btn);
+    if (EXPRESSIVE && !audioCache.has(`${voice}|${s.emotion}|${s.text}`)) toast("Designing this voice… the first preview takes a few seconds");
+    speak(voice, s.text, s.emotion, play);
   });
-  btn.addEventListener("click", () => openVoicePop(btn, get(), (v) => { set(v); paint(); }, sample, autoPick));
-  btn._paint = paint;
-  return btn;
-}
-
-function openVoicePop(anchor, currentValue, onPick, sample, autoPick) {
-  const pop = $("#voice-pop");
-  pop.innerHTML = "";
-  pop.append(h("div.hint", null, "Hover to listen · click to choose"));
-  const rows = [];
-  let hoverTimer = null;
-
-  const addRow = (value, label, star) => {
-    const row = h("div.voice-row", { class: value === currentValue ? "sel" : null },
-      star ? h("span.star", null, "★") : null, h("span", null, label),
-      h("span.eq", null, h("b"), h("b"), h("b")));
-    const voice = value === "auto" ? autoPick() : value;
-    const listen = () => { if (voice) { const s = sample(); speak(voice, s.text, s.emotion, row); } };
-    row.addEventListener("mouseenter", () => { clearTimeout(hoverTimer); hoverTimer = setTimeout(listen, 320); highlight(rows.indexOf(row), false); });
-    row.addEventListener("mouseleave", () => clearTimeout(hoverTimer));
-    row.addEventListener("click", () => { onPick(value); listen(); close(); changed(); });
-    row._listen = listen; row._value = value;
-    rows.push(row);
-    pop.append(row);
-  };
-
-  addRow("auto", `Auto${autoPick() ? ` (${voiceLabel(autoPick())})` : ""}`);
-  let group = "";
-  for (const v of VOICES) {
-    const g = `${v.accent} · ${pretty(v.gender)}`;
-    if (g !== group) { pop.append(h("div.group", null, g)); group = g; }
-    addRow(v.id, v.name, v.featured);
-  }
-
-  let hl = rows.findIndex((r) => r._value === currentValue);
-  function highlight(i, play = true) {
-    rows.forEach((r) => r.classList.remove("hl"));
-    hl = Math.max(0, Math.min(rows.length - 1, i));
-    rows[hl].classList.add("hl");
-    rows[hl].scrollIntoView({ block: "nearest" });
-    if (play) { clearTimeout(hoverTimer); hoverTimer = setTimeout(rows[hl]._listen, 250); }
-  }
-  function onKey(e) {
-    if (e.key === "ArrowDown") { e.preventDefault(); highlight(hl + 1); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); highlight(hl - 1); }
-    else if (e.key === "Enter") { e.preventDefault(); rows[hl]?.click(); }
-    else if (e.key === "Escape") close();
-  }
-  function onOutside(e) { if (!pop.contains(e.target) && !anchor.contains(e.target)) close(); }
-  function close() {
-    pop.hidden = true;
-    clearTimeout(hoverTimer);
-    document.removeEventListener("keydown", onKey, true);
-    document.removeEventListener("mousedown", onOutside, true);
-    $(".views").removeEventListener("scroll", close);
-  }
-
-  pop.hidden = false;
-  const r = anchor.getBoundingClientRect();
-  const below = window.innerHeight - r.bottom;
-  pop.style.left = `${Math.min(r.left, window.innerWidth - 300)}px`;
-  pop.style.top = below > 300 ? `${r.bottom + 6}px` : "";
-  pop.style.bottom = below > 300 ? "" : `${window.innerHeight - r.top + 6}px`;
-  if (hl >= 0) { rows[hl].classList.add("hl"); rows[hl].scrollIntoView({ block: "center" }); }
-  document.addEventListener("keydown", onKey, true);
-  document.addEventListener("mousedown", onOutside, true);
-  $(".views").addEventListener("scroll", close, { once: true });
+  return h("div.voice-field", null, picker, input, h("div.voice-actions", null, play, chips));
 }
 
 // ---------- story view --------------------------------------------------------------
@@ -325,8 +305,8 @@ function renderFeel() {
       toggle("Music", e.music, (v) => { e.music = v; changed(); }),
       toggle("Subtitles", e.subtitles, (v) => { e.subtitles = v; changed(); }))),
     h("div", { style: "min-width:250px" }, h("label.field-label", null, "Narrator voice"),
-      voicePicker({ get: () => e.narrator_voice, set: (v) => (e.narrator_voice = v),
-        autoPick: () => lastCheck?.summary?.narrator, sample: narratorSample })),
+      voiceField({ get: () => e.narrator_voice, set: (v) => (e.narrator_voice = v),
+        autoDesc: () => lastCheck?.summary?.narrator, sample: narratorSample })),
   );
 }
 
@@ -350,8 +330,8 @@ function renderCast() {
       h("div.row", null,
         field("Age", select(OPT.ages, c.age, (v) => { c.age = v; changed(); })),
         field("Gender", select(OPT.genders, c.gender, (v) => { c.gender = v; changed(); }))),
-      field("Voice", voicePicker({ get: () => c.voice, set: (v) => (c.voice = v),
-        autoPick: () => lastCheck?.summary?.cast?.[c.id], sample: () => sampleFor(c.id) })),
+      field("Voice", voiceField({ get: () => c.voice, set: (v) => (c.voice = v),
+        autoDesc: () => lastCheck?.summary?.cast?.[c.id], sample: () => sampleFor(c.id) })),
     ));
   });
   wrap.append(h("button.add-card", { type: "button", onclick: addCharacter }, "+ Add character"));
@@ -497,7 +477,7 @@ function beatRow(sc, b, j) {
     say.addEventListener("click", () => {
       const v = S.episode.narrator_voice !== "auto" ? S.episode.narrator_voice : lastCheck?.summary?.narrator;
       if (!v) return toast("Fix the script issues first, so the narrator gets a voice");
-      speak(v, b.narration, "neutral", say);
+      speak(v, b.narration, `narration:${sc.mood || "calm"}`, say);   // told in the scene's mood
     });
     body.append(textInput(b.narration, "Narrator says…", (v) => { b.narration = v; changed(); }), say);
   } else if (kind === "action") {
@@ -574,7 +554,6 @@ function paintStatus() {
   }
   const create = $("#create");
   create.disabled = !lastCheck?.ok || running || !!VOICE_MISSING;
-  $("#storyboard").disabled = create.disabled;
   $("span", create).textContent = running ? `Creating… ${Math.round(job.progress * 100)}%` : "Create episode";
 }
 
@@ -602,9 +581,9 @@ function toggleIssues() {
 // ---------- render job dock --------------------------------------------------------------
 
 let pollTimer;
-async function createEpisode(mode = "full") {
+async function createEpisode() {
   if ($("#create").disabled) return;
-  const r = await api.post("/api/jobs", { script: S, mode });
+  const r = await api.post("/api/jobs", { script: S });
   const data = await r.json();
   if (!r.ok) { lastCheck = { ok: false, errors: data.errors || [{ where: "", message: data.error }] }; paintStatus(); return toggleIssues(); }
   job = data.job;
@@ -619,9 +598,26 @@ async function poll() {
   const was = job.status;
   job = data.job;
   renderDock(); paintStatus();
-  if (["queued", "running"].includes(job.status)) pollTimer = setTimeout(poll, 700);
+  if (["queued", "running"].includes(job.status)) pollTimer = setTimeout(poll, 1000);
   else if (was !== job.status && job.status === "done") { toast("Your episode is ready"); renderLibrary(); }
 }
+
+// Episodes can also be started from the terminal (scripts/make_episode.sh): keep an eye
+// out for one, so the dock always shows whatever is being made.
+async function watchJobs() {
+  try {
+    if (!job || !["queued", "running"].includes(job.status)) {
+      const { job: latest } = await api.get("/api/jobs/latest");
+      if (latest && ["queued", "running"].includes(latest.status) && latest.id !== job?.id) {
+        job = latest; renderDock(); paintStatus(); poll();
+      }
+    }
+  } catch {}
+  setTimeout(watchJobs, 3000);
+}
+
+const longClock = (s) => (s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`
+  : s >= 60 ? `${Math.round(s / 60)} min` : `${Math.max(1, Math.round(s))}s`);
 
 const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -633,17 +629,26 @@ function renderDock() {
   dock.classList.toggle("failed", job.status === "failed");
   const running = ["queued", "running"].includes(job.status);
   const elapsed = ((job.finished || Date.now() / 1000) - (job.started || job.created));
-  const eta = running && job.progress > 0.08 ? ` · ~${clock(elapsed * (1 - job.progress) / job.progress)} left` : "";
+  const pct = Math.round(job.progress * 100);
   const headline = { queued: "Waiting…", running: "Creating", done: "Ready", failed: "Failed", cancelled: "Cancelled" }[job.status];
+  const timing = running
+    ? [`${clock(elapsed)} elapsed`, job.eta != null ? `about ${longClock(job.eta)} left` : "estimating…"]
+    : [`took ${longClock(elapsed)}`, ""];
+  const preview = job.preview ? `/project-media/${job.preview.split("?")[0]}?${job.preview.split("?")[1] || ""}` : null;
 
   dock.replaceChildren(
     h("div.dock-head", null, h("strong", null, `${headline} · ${job.title || "Untitled"}`),
-      iconBtn(dock.classList.contains("collapsed") ? "up" : "min", "Show/hide steps", () => { dock.classList.toggle("collapsed"); renderDock(); }),
+      job.external ? h("span.tag", { title: "Started from the terminal" }, "Terminal") : null,
+      iconBtn(dock.classList.contains("collapsed") ? "up" : "min", "Show/hide details", () => { dock.classList.toggle("collapsed"); renderDock(); }),
       running ? null : iconBtn("x", "Dismiss", () => { job = null; renderDock(); paintStatus(); })),
-    h("div.dock-msg", null, h("span", null, job.status === "failed" ? job.error : job.message), h("span", null, clock(elapsed) + eta)),
-    h("div.progress", null, h("i", { style: `width:${Math.round(job.progress * 100)}%` })),
+    preview && running ? h("div.dock-preview", { style: `background-image:url('${preview}')`, title: "The latest thing made for this episode" },
+      h("span", null, "Latest")) : null,
+    h("div.dock-now", null, job.status === "failed" ? job.error : running ? (job.now || job.message) : job.message),
+    h("div.progress", null, h("i", { style: `width:${pct}%` })),
+    h("div.dock-msg", null, h("span", null, `${pct}% · ${timing[0]}`), h("span", null, timing[1]),
+      running && job.total ? h("span.dock-total", null, `~${longClock(job.total)} in total`) : null),
     h("ul.stages", null, job.stages.map((s) => h("li", { class: s.state }, h("span.st"),
-      h("span", null, s.label, s.implemented ? null : h("span.soon", null, "SOON"), s.detail ? h("span.detail", null, s.detail) : null)))),
+      h("span", null, s.label, s.detail ? h("span.detail", null, s.detail) : null)))),
     h("div.dock-actions", null,
       running ? h("button.ghost", { type: "button", onclick: () => api.post(`/api/jobs/${job.id}/cancel`, {}) }, "Cancel") : null,
       job.status === "done" ? h("button.primary", { type: "button", onclick: () => openPlayer(job.video.replace(/\.mp4$/, "")) }, icon("play"), "Watch") : null,
@@ -654,8 +659,20 @@ function renderDock() {
 // ---------- library & player ---------------------------------------------------------------
 
 let LIB = [];
+let LIB_SORT = (() => { try { return localStorage.getItem("libSort") || "newest"; } catch { return "newest"; } })();
+const LIB_ORDER = {
+  newest: (a, b) => (b.created || 0) - (a.created || 0),
+  oldest: (a, b) => (a.created || 0) - (b.created || 0),
+  title: (a, b) => (a.title || "").localeCompare(b.title || "") || (b.created || 0) - (a.created || 0),
+};
+function setLibSort(mode) {
+  LIB_SORT = LIB_ORDER[mode] ? mode : "newest";
+  try { localStorage.setItem("libSort", LIB_SORT); } catch {}
+  renderLibrary();
+}
 async function renderLibrary() {
-  LIB = (await api.get("/api/library")).items;
+  $$("#lib-sort button").forEach((b) => b.classList.toggle("on", b.dataset.sort === LIB_SORT));
+  LIB = (await api.get("/api/library")).items.sort(LIB_ORDER[LIB_SORT]);
   const wrap = $("#library");
   if (!LIB.length) {
     wrap.replaceChildren(h("div.empty", { style: "grid-column:1/-1" },
@@ -719,13 +736,45 @@ function onYamlInput() {
 
 let storyStale = false;
 
+// How to describe voices: shown in both Script-tab guides.
+function voiceGuide(tags, plain) {
+  return [
+    h("h4", null, "Voices"),
+    h("p", null, "Each character's voice is ", h("b", null, "designed from a short description"),
+      ", then performs every line with that line's emotion. Describe:"),
+    h("ul", null,
+      h("li", null, h("b", null, "age and gender"), ": young girl, teenage boy, old man…"),
+      h("li", null, h("b", null, "texture"), ": warm, raspy, husky, bright, deep, breathy, gravelly"),
+      h("li", null, h("b", null, "pace and energy"), ": talks fast, slow and calm, energetic, hesitant"),
+      h("li", null, h("b", null, "personality"), ": cocky, shy, sarcastic, kind, stern"),
+      h("li", null, h("b", null, "accent"), " (optional): British, Southern American…")),
+    h("p", null, "Examples:"),
+    h("pre", null, plain
+      ? `Rin's voice: teenage girl, quick and fiery, a bit sarcastic
+Sora's voice: old man, gravelly and kind, slow and calm
+Leo's voice: young boy, bright and excited, talks fast`
+      : `voice: "teenage girl, quick and fiery, a bit sarcastic"
+voice: "old man, gravelly and kind, slow and calm"
+voice: "young boy, bright and excited, talks fast"`),
+    h("p", null, "Leave it out (or ", h("code", null, "auto"), ") and a voice is built from age and gender. ",
+      "The narrator's voice works the same way."),
+    h("p", null, "The line's ", h("b", null, "emotion"), " sets the delivery: angry lines sound sharp, scared ones shaky, sad ones soft. ",
+      "Add sounds inside a line with these tags:"),
+    tags(["[laugh]", "[chuckle]", "[sigh]", "[gasp]", "[cough]", "[groan]", "[sniff]"]),
+    h("pre", null, plain ? `RIN (angry): Get out of my way! [gasp]
+KAI (happy): You actually did it! [laugh]`
+      : `- line: { who: rin, text: "Get out of my way! [gasp]", emotion: angry }`),
+    h("p.muted", null, "Tags are performed, never shown in subtitles. Preview any voice on its cast card in Story."),
+  ];
+}
+
 function renderGuide() {
   const tags = (list) => h("div.tags", null, list.map((t) => h("code", { title: "Click to copy",
     onclick: () => { navigator.clipboard?.writeText(t); toast(`Copied “${t}”`); } }, t)));
   $("#guide").replaceChildren(
     h("h3", null, "How to write a script"),
     h("p", null, "A script has four parts. ", h("b", null, "episode"), " sets the title and look. ",
-      h("b", null, "characters"), " lists who appears: an id you reuse, a name, a look (comma-separated visual tags work best), age, gender and a voice (or ", h("code", null, "auto"), "). ",
+      h("b", null, "characters"), " lists who appears: an id you reuse, a name, a look (comma-separated visual tags work best), age, gender and a voice description (see ", h("b", null, "Voices"), " below). ",
       h("b", null, "locations"), " lists places, each with an id and a look. ",
       h("b", null, "scenes"), " play in order. Each one picks a location, time and mood, then lists its ", h("b", null, "beats"), ":"),
     h("p", null, h("code", null, "line"), " (who, text, emotion, optional gesture), ",
@@ -735,7 +784,8 @@ function renderGuide() {
     h("h4", null, "Shape"),
     h("pre", null, `episode: { title: "…", style: anime_tv }
 characters:
-  - { id: kai, name: Kai, look: "…", age: teen, gender: male, voice: auto }
+  - { id: kai, name: Kai, look: "…", age: teen, gender: male,
+      voice: "teenage boy, bright and cocky, talks fast" }
 locations:
   - { id: beach, look: "…" }
 scenes:
@@ -743,7 +793,7 @@ scenes:
     location: beach
     beats:
       - camera: establishing
-      - line: { who: kai, text: "…", emotion: happy }
+      - line: { who: kai, text: "Watch this! [laugh]", emotion: happy }
       - action: "Kai jumps off the pier"
         characters: [kai]
         big: true
@@ -752,7 +802,7 @@ scenes:
     h("h4", null, "Gestures"), tags(OPT.gestures),
     h("h4", null, "Camera"), tags(OPT.cameras),
     h("h4", null, "Times · moods · styles"), tags([...OPT.times, ...OPT.moods, ...OPT.styles]),
-    h("h4", null, "Voices"), tags(VOICES.map((v) => v.id)),
+    ...voiceGuide(tags, false),
   );
 }
 
@@ -763,7 +813,9 @@ const EXAMPLE_TEXT = `Title: The Last Wave
 
 Characters:
 Kai is a teenage boy with messy black hair, blue eyes and an orange hoodie. Slim build.
+Kai's voice: teenage boy, bright and cocky, talks fast.
 Mira is a teenage girl with long silver hair in a ponytail, green eyes and a white surf jacket.
+Mira's voice: teenage girl, warm but worried, a little breathless.
 
 Scene 1: An empty beach at sunset, big waves rolling in, a wooden pier in the distance. Calm.
 Narrator: Every summer, the biggest wave came on the last day.
@@ -776,7 +828,7 @@ KAI (confident, pointing at the ocean): Watch me.
 Scene 2: Same beach, epic.
 A giant wave rises over the ocean with a roar.
 BIG MOMENT: Kai paddles hard, then leaps up and rides the giant wave, spray flying everywhere.
-MIRA (amazed): He's actually doing it!`;
+MIRA (amazed): He's actually doing it! [laugh]`;
 
 let importTask = null, importTimer = null;
 
@@ -798,14 +850,16 @@ function renderTextGuide(result) {
     h("p", null, "Write it however you like, as a screenplay, a story or rough notes. The local story model reads it and fills in every field. The more you describe, the less it has to guess."),
     h("ul", null,
       h("li", null, h("b", null, "Title"), " of the episode."),
-      h("li", null, h("b", null, "Characters"), ": name, what they look like (hair, eyes, clothes), age and gender."),
+      h("li", null, h("b", null, "Characters"), ": name, what they look like (hair, eyes, clothes), age, gender, and ",
+        h("b", null, "how they sound"), " (see Voices below)."),
       h("li", null, h("b", null, "Places"), ": what each location looks like."),
       h("li", null, h("b", null, "Scenes"), ": where and when (day, sunset, night) and the mood."),
-      h("li", null, h("b", null, "Dialogue"), " as ", h("code", null, "NAME (emotion): line"), "."),
+      h("li", null, h("b", null, "Dialogue"), " as ", h("code", null, "NAME (emotion): line"), ", with optional sounds like ", h("code", null, "[laugh]"), "."),
       h("li", null, h("b", null, "Actions"), " as plain sentences. Mark the spectacular one with ", h("code", null, "BIG MOMENT:"), " to get AI motion."),
       h("li", null, h("b", null, "Narration"), " as ", h("code", null, "Narrator: …"), ".")),
     h("p.muted", null, "Dialogue is kept word for word. Anything the model had to invent, like a missing hairstyle, is listed after it finishes, so you can check it in Story."),
     h("p.muted", null, "A structured YAML script pasted here loads instantly, with no model needed."),
+    ...voiceGuide((list) => h("div.tags", null, list.map((t) => h("code", null, t))), true),
   );
   $("#text-guide").replaceChildren(...parts);
 }
@@ -893,11 +947,12 @@ async function loadTemplate() {
 
 async function boot() {
   const [opt, voices, latest] = await Promise.all([api.get("/api/options"), api.get("/api/voices"), api.get("/api/jobs/latest")]);
-  OPT = opt; VOICES = voices.voices; VOICE_MISSING = voices.missing;
+  OPT = opt; VOICES = voices.voices; VOICE_MISSING = voices.missing; EXPRESSIVE = !!voices.expressive;
 
   const engine = $("#engine");
   engine.classList.add(VOICE_MISSING ? "bad" : "ok");
-  engine.title = VOICE_MISSING || `Voice engine ready · ${VOICES.length} English voices`;
+  engine.title = VOICE_MISSING || (EXPRESSIVE ? "Expressive voices ready (Qwen3-TTS)"
+    : "Fast voices only: run scripts/download_models.py for expressive voices");
   if (VOICE_MISSING) { const b = $("#banner"); b.hidden = false; b.textContent = `Voices aren't ready: ${VOICE_MISSING}`; }
 
   let saved = null;
@@ -910,6 +965,7 @@ async function boot() {
   try { $("#story-text").value = localStorage.getItem(TEXT_STORE) || ""; } catch {}
   $("#story-text").addEventListener("input", (e) => { try { localStorage.setItem(TEXT_STORE, e.target.value); } catch {} });
   $$("#script-mode button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  $$("#lib-sort button").forEach((b) => b.addEventListener("click", () => setLibSort(b.dataset.sort)));
   $("#fill").addEventListener("click", fillFromText);
   $("#fill-cancel").addEventListener("click", () => { stopImport(); finishImport({ status: "cancelled" }); });
   $("#text-example").addEventListener("click", () => {
@@ -922,8 +978,7 @@ async function boot() {
   $("#title").addEventListener("input", (e) => { S.episode.title = e.target.value; changed(); });
   $("#status").addEventListener("click", toggleIssues);
   document.addEventListener("mousedown", (e) => { if (!$("#issues").contains(e.target) && e.target !== $("#status")) $("#issues").hidden = true; });
-  $("#create").addEventListener("click", () => createEpisode("full"));
-  $("#storyboard").addEventListener("click", () => createEpisode("storyboard"));
+  $("#create").addEventListener("click", () => createEpisode());
   $("#add-scene").addEventListener("click", () => {
     S.scenes.push({ id: uniqueId(`s${S.scenes.length + 1}`, S.scenes.map((s) => s.id)), location: S.locations[0]?.id || "", time: "day", mood: "calm", beats: [] });
     changed({ rerender: renderScenes });
@@ -965,6 +1020,7 @@ async function boot() {
   });
 
   if (latest.job && ["queued", "running"].includes(latest.job.status)) { job = latest.job; renderDock(); poll(); }
+  watchJobs();
   const v = new URLSearchParams(location.search).get("view");
   if (v) show(v);
 }

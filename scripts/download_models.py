@@ -13,12 +13,15 @@ import urllib.request
 from pathlib import Path
 
 MODELS = Path(__file__).resolve().parents[1] / "models"
+HF_CACHE = None   # marker: models loaded by mlx-audio live in models/hf-cache (Hugging Face cache layout)
 
 # (what it's for, Hugging Face repo, files/patterns, local folder, approx size GB, license)
 CORE = [
     ("Image generation (anime/cartoon art)", "OnomaAIResearch/Illustrious-XL-v2.0",
      ["Illustrious-XL-v2.0.safetensors"], "image/Illustrious-XL-v2.0", 6.9, "Fair AI Public License 1.0-SD"),
-    ("Voices (28 English voices)", "hexgrad/Kokoro-82M",
+    ("Voices: expressive, designed from a description (Qwen3-TTS)", "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit",
+     ["*"], HF_CACHE, 3.1, "Apache-2.0"),
+    ("Voices: fast fallback (Kokoro, 28 English voices)", "hexgrad/Kokoro-82M",
      ["config.json", "kokoro-v1_0.pth", "voices/a*.pt", "voices/b*.pt"], "tts/Kokoro-82M", 0.35, "Apache-2.0"),
     ("Vision-language model: faces, free-text import, quality review", "mlx-community/Qwen3.5-4B-4bit",
      ["*"], "llm/Qwen3.5-4B-4bit", 2.9, "Apache-2.0"),
@@ -57,7 +60,10 @@ def main() -> None:
     from huggingface_hub import snapshot_download
     for purpose, repo, patterns, folder, size, _ in plan:
         print(f"→ {purpose} ({repo})", flush=True)
-        snapshot_download(repo, allow_patterns=patterns, local_dir=MODELS / folder)
+        if folder is HF_CACHE:
+            snapshot_download(repo, allow_patterns=patterns, cache_dir=MODELS / "hf-cache")
+        else:
+            snapshot_download(repo, allow_patterns=patterns, local_dir=MODELS / folder)
 
     target = MODELS / ANIMEFACE[2]
     if not target.exists():

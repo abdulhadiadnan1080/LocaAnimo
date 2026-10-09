@@ -17,7 +17,7 @@ einops==0.8.2
 onnxruntime==1.30.0
 rtmlib==0.0.16
 
-# voices (Kokoro) and its English pronunciation dictionary
+# fast fallback voices (Kokoro) and its English pronunciation dictionary
 kokoro==0.9.4
 misaki[en]==0.9.4
 spacy==3.8.16
@@ -25,7 +25,9 @@ en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_
 soundfile==0.14.0
 
 # local vision-language model (Qwen3.5): face finding, free-text import, quality review
+# and the expressive voices (Qwen3-TTS through mlx-audio)
 mlx==0.32.3
+mlx-audio==0.5.7
 mlx-lm==0.32.0
 mlx-vlm==0.7.4
 

@@ -22,7 +22,7 @@ from PIL import Image  # noqa: E402
 from locaanimo import animate, prep, sfx  # noqa: E402
 from locaanimo.paths import OUTPUTS, PROJECTS  # noqa: E402
 from locaanimo.schema import ActionBeat, CameraBeat, LineBeat, NarrationBeat, PauseBeat, load_script  # noqa: E402
-from locaanimo.voices import EMOTION_SPEED, SAMPLE_RATE, cast_voices, engine  # noqa: E402
+from locaanimo.voices import SAMPLE_RATE, cast_voices, kokoro_cast, synth_lines  # noqa: E402
 
 script = load_script(sys.argv[1])
 project = PROJECTS / sys.argv[2]
@@ -108,7 +108,7 @@ if need_blink:
         eye_mask = prep.eye_mask(base, landmarks[str(art / f"char_{c.id}.png")])
         blink = artist.inpaint(base, eye_mask, character_prompt(c.look, c.gender, script.episode.style.value,
                                "closed eyes, eyes closed, light smile", age=c.age), seed_for(c.id) + 1,
-                               negative=character_negative(c.age) + ", open eyes")
+                               negative=character_negative(c.age, c.look) + ", open eyes")
         blink.save(art / f"char_{c.id}_blink.png")
         log(f"render: {c.name}: closed eyes painted")
     del artist
@@ -130,11 +130,36 @@ def run_review(checks: list[dict]) -> dict:
     return {r["id"]: r for r in json.loads(result.stdout.strip().splitlines()[-1])}
 
 
+BEARD = re.compile(r"\b(beard|bearded|mustache|moustache|goatee|whiskers)\b", re.I)
+
+
+def bearded(c) -> bool:
+    """A beard or mustache hides the mouth: such characters talk by moving the beard."""
+    return bool(BEARD.search(c.look))
+
+
+def mouth_below_eyes(eyes, mouth) -> bool:
+    """Geometry check, no AI needed: a mouth sits clearly below the eyes (0.4 to 1.7
+    eye-distances lower) and between them sideways. Catches mouths on brows, noses, clothes."""
+    if not eyes or len(eyes) != 2:
+        return True
+    (ax, ay), (bx, by) = [(x + w / 2, y + h / 2) for x, y, w, h in eyes]
+    dist = max(1.0, abs(bx - ax))
+    drop = (mouth["y"] - (ay + by) / 2) / dist
+    return 0.4 <= drop <= 1.7 and abs(mouth["x"] - (ax + bx) / 2) <= 0.6 * dist
+
+
 def build_character(c, base, alpha, mode: str):
-    """mode: "vision" (Qwen's face points), "pixels" (heuristics) or "still" (no lip flap)."""
+    """mode: "vision" (Qwen's face points), "pixels" (heuristics) or "still" (no lip flap).
+    Returns (face, the mode actually used): a misplaced mouth steps down to the next mode."""
     lm = landmarks.get(str(art / f"char_{c.id}.png"))
     if mode == "vision" and lm and {"mouth", "left_eye", "right_eye"} <= lm.keys():
         face, eyes, mouth = prep.parts_from_landmarks(base, lm)
+    elif lm and {"left_eye", "right_eye"} <= lm.keys():
+        # the vision model's face and eyes are still right when only its mouth was rejected:
+        # search for the mouth line below those eyes, never anywhere else on the body
+        face, eyes, _ = prep.parts_from_landmarks(base, lm)
+        mouth = prep.find_mouth(base, face, eyes)
     else:
         face = prep.anime_face(base, alpha)
         if face is None:
@@ -144,8 +169,20 @@ def build_character(c, base, alpha, mode: str):
             face = (int(xs[ys < top + size].mean() - size / 2), int(top), size, size)
         eyes = prep.find_eyes(base, face)
         mouth = prep.find_mouth(base, face, eyes)
+    if mode != "still" and not mouth_below_eyes(eyes, mouth):
+        nxt = {"vision": "pixels", "pixels": "still"}[mode]
+        report.append(f"{c.name}: mouth wasn't below the eyes in {mode} mode, switching to {nxt}")
+        log(f"render: review: {report[-1]}")
+        return build_character(c, base, alpha, nxt)
     if mode == "still":
         states = {"base": base, "half": base, "talk": base}
+    elif bearded(c):
+        if eyes and len(eyes) == 2:
+            eye_dist = abs((eyes[0][0] + eyes[0][2] / 2) - (eyes[1][0] + eyes[1][2] / 2))
+        else:
+            eye_dist = 0.4 * face[2]
+        mouths = prep.beard_states(base, mouth, eye_dist)
+        states = {"base": mouths["closed"], "half": mouths["half"], "talk": mouths["open"]}
     else:
         mouths = prep.mouth_states(base, mouth)
         states = {"base": mouths["closed"], "half": mouths["half"], "talk": mouths["open"]}
@@ -158,7 +195,7 @@ def build_character(c, base, alpha, mode: str):
     for name, img in states.items():
         img.save(project / f"sprite_{c.id}_{name}.png")
     sprites[c.id] = animate.make_sprite(states, alpha, (face[0] + face[2] / 2, face[1] + face[3] * 0.55))
-    return face
+    return face, mode
 
 
 log("render: preparing characters")
@@ -169,7 +206,7 @@ for c in script.characters:
     base = Image.open(art / f"char_{c.id}.png").convert("RGB")
     bases[c.id] = (base, cutter.alpha(base))
     mode[c.id] = "vision" if landmarks.get(str(art / f"char_{c.id}.png")) else "pixels"
-    faces[c.id] = build_character(c, *bases[c.id], mode[c.id])
+    faces[c.id], mode[c.id] = build_character(c, *bases[c.id], mode[c.id])
     log(f"render: {c.name}: mouth placed by {mode[c.id]}")
 del cutter
 
@@ -187,7 +224,7 @@ def face_crop(cid: str, state: str) -> str:
 log("render: review: checking mouths and blinks")
 for attempt in range(2):
     checks = [{"id": f"mouth:{c.id}", "kind": "mouth", "image": face_crop(c.id, "talk")}
-              for c in script.characters if mode[c.id] != "still"]
+              for c in script.characters if mode[c.id] != "still" and not bearded(c)]   # beards: no drawn mouth
     if attempt == 0:
         checks += [{"id": f"blink:{c.id}", "kind": "blink", "image": face_crop(c.id, "blink")}
                    for c in script.characters if (project / f"sprite_{c.id}_blink.png").exists()
@@ -212,7 +249,7 @@ for attempt in range(2):
     if not redo:
         break
     for c in redo:
-        faces[c.id] = build_character(c, *bases[c.id], mode[c.id])
+        faces[c.id], mode[c.id] = build_character(c, *bases[c.id], mode[c.id])
 log(f"render: review: characters OK ({', '.join(f'{c.name}={mode[c.id]}' for c in script.characters)})")
 
 # 3. Backgrounds and action illustrations → depth-parallax plates.
@@ -227,6 +264,19 @@ log(f"render: {len(plates)} plates, {len(heroes)} action shots")
 # 4. Voices, sound effects and ambience.
 log("render: recording voices")
 cast, narrator = cast_voices(script.characters, script.episode.narrator_voice)
+fast_cast, fast_narrator = kokoro_cast(script.characters, script.episode.narrator_voice)
+spoken = []                                   # every line and narration, in episode order
+for scene in script.scenes:
+    for beat in scene.beats:
+        if isinstance(beat, LineBeat):
+            spoken.append({"text": beat.line.text, "voice": cast[beat.line.who],
+                           "emotion": beat.line.emotion.value, "fallback": fast_cast[beat.line.who]})
+        elif isinstance(beat, NarrationBeat):
+            spoken.append({"text": beat.narration, "voice": narrator, "emotion": f"narration:{scene.mood}",
+                           "fallback": fast_narrator})
+t_voice = time.time()
+recorded = iter(synth_lines(spoken, project, log))
+log(f"render: {len(spoken)} lines recorded in {time.time() - t_voice:.0f}s")
 locs = {l.id: l for l in script.locations}
 clips, voice_track, events, scene_spans = [], [], [], []
 big_seen = 0
@@ -237,10 +287,10 @@ for scene in script.scenes:
     for beat in scene.beats:
         audio = None
         if isinstance(beat, LineBeat):
-            audio = engine.synth(beat.line.text, cast[beat.line.who], EMOTION_SPEED[beat.line.emotion.value])
+            audio = next(recorded)
             dur = len(audio) / SAMPLE_RATE + 0.45
         elif isinstance(beat, NarrationBeat):
-            audio = engine.synth(beat.narration, narrator)
+            audio = next(recorded)
             dur = len(audio) / SAMPLE_RATE + 0.5
         elif isinstance(beat, ActionBeat):
             dur = 3.4 if beat.big else 2.6
@@ -316,18 +366,11 @@ for i, shot in enumerate(shots):
 log(f"render: review: checking {len(frame_checks)} preview frames")
 frame_results = run_review(frame_checks)
 flagged = [(int(k.split(":")[1]), r["issue"]) for k, r in frame_results.items() if not r["ok"]]
+# Whole-frame flags are reported, not acted on: in testing they were mostly false alarms,
+# while the close-up mouth and blink checks above (which do fix things) proved reliable.
 for i, issue in flagged:
-    report.append(f"shot {i + 1}: {issue}")
-    log(f"render: review: shot {i + 1} flagged: {issue}")
-    speaker = shots[i].speaker
-    if speaker and "mouth" in issue.lower() and mode.get(speaker) != "still":
-        mode[speaker] = "still"                       # the mouth is the problem: stop lip flap for them
-        cutter = prep.Cutter()
-        bases[speaker] = (bases[speaker][0], cutter.alpha(bases[speaker][0]))
-        del cutter
-        c = next(c for c in script.characters if c.id == speaker)
-        faces[speaker] = build_character(c, *bases[speaker], "still")
-        log(f"render: review: {c.name}'s lip flap turned off for the final cut")
+    report.append(f"shot {i + 1} (for a human to check): {issue}")
+    log(f"render: review: shot {i + 1} flagged for a look: {issue[:120]}")
 if not flagged:
     log("render: review: all preview frames look right")
 (review_dir / "report.json").write_text(json.dumps({"changes": report, "flagged_shots": flagged}, indent=2))

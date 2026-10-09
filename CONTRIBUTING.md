@@ -11,12 +11,12 @@ Thanks for wanting to help! LocaAnimo turns a written story into a voiced, anima
 
 ## Getting set up
 
-You need an Apple Silicon Mac (16 GB+ RAM), [ffmpeg](https://ffmpeg.org) and about 15 GB of free disk space.
+You need an Apple Silicon Mac (16 GB+ RAM), [ffmpeg](https://ffmpeg.org) and about 18 GB of free disk space.
 
 ```sh
 git clone https://github.com/<your-username>/LocaAnimo.git
 cd LocaAnimo
-scripts/setup.sh            # Python 3.11 env + core models (~11 GB)
+scripts/setup.sh            # Python 3.11 env + core models (~14 GB)
 ./studio.sh                 # the studio app at http://127.0.0.1:4747
 ```
 
@@ -51,7 +51,7 @@ AI motion needs LTX-Video (`scripts/setup.sh --video`, ~27 GB more). Everything 
 | Shots, camera and compositing | `src/locaanimo/animate.py` |
 | AI motion | `src/locaanimo/video.py` |
 | Quality review | `src/locaanimo/review.py` |
-| Voices | `src/locaanimo/voices.py` |
+| Voices | `src/locaanimo/speech.py` (Qwen3-TTS), `src/locaanimo/voices.py` (descriptions, Kokoro fallback) |
 | The full render | `scripts/render_episode.py` |
 | Studio app | `src/locaanimo/server.py`, `src/locaanimo/pipeline.py`, `web/` |
 

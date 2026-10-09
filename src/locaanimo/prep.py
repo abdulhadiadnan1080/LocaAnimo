@@ -167,7 +167,8 @@ def find_mouth(img: Image.Image, face, eyes=None) -> dict:
     x, y, w, h, _ = stats[best]
     mask = np.zeros(rgb.shape[:2], np.uint8)
     mask[y0:y1, x0:x1][labels == best] = 255
-    return {"x": x0 + x + w / 2, "y": y0 + y + h / 2, "w": float(w), "found": True, "mask": mask, "face": face}
+    return {"x": x0 + x + w / 2, "y": y0 + y + h / 2, "w": float(w), "found": True, "mask": mask, "face": face,
+            "angle": eye_angle(eyes)}
 
 
 def _erase(img: np.ndarray, mask: np.ndarray, grow: int) -> np.ndarray:
@@ -175,20 +176,57 @@ def _erase(img: np.ndarray, mask: np.ndarray, grow: int) -> np.ndarray:
     return cv2.inpaint(img, m, 5, cv2.INPAINT_TELEA)
 
 
+def eye_angle(eyes) -> float:
+    """Tilt of the face in degrees, from the line through the two eyes (0 = level;
+    positive = the face's right side, on the viewer's right, sits lower)."""
+    if not eyes or len(eyes) != 2:
+        return 0.0
+    (ax, ay), (bx, by) = sorted((x + w / 2, y + h / 2) for x, y, w, h in eyes)
+    ang = float(np.degrees(np.arctan2(by - ay, bx - ax)))
+    return ang if abs(ang) <= 35 else 0.0          # beyond that it's a bad eye pair, not a tilt
+
+
 def mouth_states(img: Image.Image, mouth: dict) -> dict[str, Image.Image]:
-    """closed (original drawing), half and open mouths drawn in TV-anime style."""
+    """closed (original drawing), half and open mouths drawn in TV-anime style, turned to
+    follow the tilt of the face."""
     rgb = np.asarray(img.convert("RGB")).copy()
     fw = mouth["face"][2]
     base = _erase(rgb, mouth["mask"], max(3, int(fw * 0.02))) if mouth["mask"] is not None else rgb
     w = max(mouth["w"] * 0.9, 0.11 * fw)
     out = {"closed": img.convert("RGB")}
     for name, openness in (("half", 0.32), ("open", 0.62)):
-        out[name] = _draw_mouth(base, mouth["x"], mouth["y"], w, w * openness)
+        out[name] = _draw_mouth(base, mouth["x"], mouth["y"], w, w * openness, mouth.get("angle", 0.0))
     return out
 
 
-def _draw_mouth(rgb: np.ndarray, cx: float, cy: float, w: float, h: float) -> Image.Image:
-    """A rounded 'D' mouth: dark inside, pink tongue, thin outline. Drawn 4x and downsampled."""
+def beard_states(img: Image.Image, mouth: dict, eye_dist: float) -> dict[str, Image.Image]:
+    """For a mouth hidden under a beard or mustache: no drawn mouth, the beard itself moves.
+    The lower face is pushed gently down along the face's own "down" (it follows a tilted
+    head) with a smooth falloff, like a jaw moving under the hair."""
+    rgb = np.asarray(img.convert("RGB"))
+    h, w = rgb.shape[:2]
+    ang = np.radians(mouth.get("angle", 0.0))
+    cx, cy = mouth["x"], mouth["y"]
+    top, bottom, half = cy - 0.15 * eye_dist, cy + 1.0 * eye_dist, 0.7 * eye_dist
+    gx, gy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    # coordinates in the face's frame: u across the face, v down the face
+    u = (gx - cx) * np.cos(ang) + (gy - cy) * np.sin(ang)
+    v = -(gx - cx) * np.sin(ang) + (gy - cy) * np.cos(ang) + cy
+    t = np.clip((v - top) / (bottom - top), 0, 1)
+    across = 0.5 * (1 + np.cos(np.pi * np.clip(np.abs(u) / half, 0, 1)))
+    bump = np.sin(np.pi * t) * across
+    out = {"closed": img.convert("RGB")}
+    for name, amount in (("half", 0.035), ("open", 0.07)):
+        d = (amount * eye_dist * bump).astype(np.float32)
+        mx = (gx + d * np.sin(ang)).astype(np.float32)   # sample from "up the face" → the beard moves down
+        my = (gy - d * np.cos(ang)).astype(np.float32)
+        out[name] = Image.fromarray(cv2.remap(rgb, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT))
+    return out
+
+
+def _draw_mouth(rgb: np.ndarray, cx: float, cy: float, w: float, h: float, angle: float = 0.0) -> Image.Image:
+    """A rounded 'D' mouth: dark inside, pink tongue, thin outline, turned by `angle`
+    degrees to match the face. Drawn 4x and downsampled."""
     S = 4
     pad = int(w * 1.5)
     x0, y0 = int(cx - pad), int(cy - pad)
@@ -202,6 +240,9 @@ def _draw_mouth(rgb: np.ndarray, cx: float, cy: float, w: float, h: float) -> Im
     inside = Image.new("RGB", patch.size, (92, 28, 38))
     tongue = Image.new("L", patch.size, 0)
     ImageDraw.Draw(tongue).ellipse((c - w * S * 0.3, top + h * S * 0.45, c + w * S * 0.3, top + h * S * 1.15), fill=255)
+    if angle:   # PIL turns counter-clockwise; image y points down, so a positive tilt is clockwise
+        shape = shape.rotate(-angle, resample=Image.BICUBIC, center=(c, c))
+        tongue = tongue.rotate(-angle, resample=Image.BICUBIC, center=(c, c))
     inside.paste((222, 112, 122), mask=Image.fromarray(np.minimum(np.asarray(tongue), np.asarray(shape))))
     outline = shape.filter(ImageFilter.MaxFilter(2 * S + 1))
     patch.paste((48, 18, 24), mask=outline)
@@ -310,7 +351,8 @@ def parts_from_landmarks(img: Image.Image, lm: dict):
     bw, bh = mx1 - mx0, max(my1 - my0, 0.12 * eye_dist)
     cx, cy = (mx0 + mx1) / 2, (my0 + my1) / 2
     mouth = {"x": cx, "y": cy, "w": float(np.clip(bw * 0.8, 0.3 * eye_dist, 0.6 * eye_dist)),
-             "found": True, "mask": None, "face": face}
+             "found": True, "mask": None, "face": face,
+             "angle": eye_angle([(x0, y0, x1 - x0, y1 - y0) for x0, y0, x1, y1 in (lm["left_eye"], lm["right_eye"])])}
     # Erase the original closed-mouth line inside the (refined) box before drawing over it.
     region = rgb[int(my0):int(my1) + 1, int(mx0):int(mx1) + 1].astype(np.int16)
     if region.size:

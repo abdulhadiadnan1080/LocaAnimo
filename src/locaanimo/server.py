@@ -22,10 +22,12 @@ import yaml
 from pydantic import ValidationError
 
 from . import schema
-from .paths import EXAMPLES, OUTPUTS, ROOT, WEB
-from .pipeline import runner
-from .schema import ActionBeat, LineBeat, NarrationBeat, CameraBeat, PauseBeat, Script
-from .voices import VoiceUnavailable, cast_voices, engine, list_voices, voice_ids
+from .paths import CACHE, EXAMPLES, OUTPUTS, PROJECTS, ROOT, WEB
+from .pipeline import episode_seconds, runner
+from .schema import Script
+from . import speech
+from .schema import strip_tags
+from .voices import VoiceUnavailable, cast_voices, engine, is_kokoro_id, list_voices
 
 HOST, PORT = "127.0.0.1", 4747
 
@@ -69,21 +71,7 @@ def _errors(exc: ValidationError) -> list[dict]:
 
 
 def estimate_minutes(script: Script) -> float:
-    seconds = 0.0
-    for scene in script.scenes:
-        seconds += 1.6
-        for b in scene.beats:
-            if isinstance(b, LineBeat):
-                seconds += max(1.2, len(b.line.text.split()) / 2.7) + 0.45
-            elif isinstance(b, NarrationBeat):
-                seconds += max(1.2, len(b.narration.split()) / 2.6) + 0.5
-            elif isinstance(b, ActionBeat):
-                seconds += 3.2 if b.big else 2.4
-            elif isinstance(b, CameraBeat):
-                seconds += 2.0
-            elif isinstance(b, PauseBeat):
-                seconds += b.pause
-    return round(seconds / 60, 2)
+    return round(episode_seconds(script) / 60, 2)
 
 
 def validate(raw: dict) -> tuple[Script | None, dict]:
@@ -91,13 +79,7 @@ def validate(raw: dict) -> tuple[Script | None, dict]:
         script = Script.model_validate(raw)
     except ValidationError as e:
         return None, {"ok": False, "errors": _errors(e)}
-    known = voice_ids()
-    bad = [f"{c.name}: unknown voice '{c.voice}'" for c in script.characters
-           if c.voice != "auto" and c.voice not in known]
-    if script.episode.narrator_voice not in ("auto", *known):
-        bad.append(f"Narrator: unknown voice '{script.episode.narrator_voice}'")
-    if bad:
-        return None, {"ok": False, "errors": [{"where": "", "message": m} for m in bad]}
+    # Voices are free-text descriptions (or Kokoro ids), so there's nothing to look up.
     summary = {
         "characters": len(script.characters), "locations": len(script.locations),
         "scenes": len(script.scenes), "beats": sum(len(s.beats) for s in script.scenes),
@@ -152,6 +134,55 @@ class ImportTask:
 imports: dict[str, ImportTask] = {}
 
 
+class SpeechWorker:
+    """The expressive-voice worker (`speech serve`), started on the first preview and kept
+    running so models load once. Previews are cached on disk by voice, emotion and text."""
+
+    def __init__(self) -> None:
+        self.proc: subprocess.Popen | None = None
+        self.lock = threading.Lock()
+
+    def _start(self) -> None:
+        env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+        self.proc = subprocess.Popen([sys.executable, "-m", "locaanimo.speech", "serve"], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
+        self._reply()                                    # wait for {"ready": true}
+
+    def _reply(self) -> dict:
+        for line in self.proc.stdout:                    # the models also print progress; skip it
+            line = line.strip()
+            if line.startswith("{"):
+                return json.loads(line)
+        raise RuntimeError("the voice worker stopped")
+
+    def preview(self, text: str, voice: str, emotion: str) -> bytes:
+        key = uuid.uuid5(uuid.NAMESPACE_URL, f"q|{voice}|{emotion}|{text}").hex[:16]
+        out = CACHE / "voice_previews" / f"x_{key}.wav"
+        if out.exists():
+            return out.read_bytes()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock:
+            for attempt in range(2):                     # restart once if the worker died
+                if self.proc is None or self.proc.poll() is not None:
+                    self._start()
+                try:
+                    self.proc.stdin.write(json.dumps({"voice": voice, "emotion": emotion, "text": text,
+                                                      "out": str(out)}) + "\n")
+                    self.proc.stdin.flush()
+                    reply = self._reply()
+                    break
+                except (BrokenPipeError, RuntimeError):
+                    self.proc = None
+                    if attempt:
+                        raise RuntimeError("the voice worker couldn't start")
+        if not reply.get("ok"):
+            raise RuntimeError(reply.get("error", "voice preview failed"))
+        return out.read_bytes()
+
+
+speaker = SpeechWorker()
+
+
 def library() -> list[dict]:
     items = []
     for meta_file in sorted(OUTPUTS.glob("*.json"), reverse=True):
@@ -163,7 +194,7 @@ def library() -> list[dict]:
         items.append({**meta, "id": meta_file.stem, "video": video.name,
                       "thumb": thumb.name if thumb.exists() else None,
                       "size_mb": round(video.stat().st_size / 1e6, 1)})
-    return items
+    return sorted(items, key=lambda m: m.get("created", 0), reverse=True)   # newest first
 
 
 # --- request handler ---------------------------------------------------------------
@@ -224,10 +255,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._file(_safe(WEB, path.removeprefix("/static/")))
         if path.startswith("/media/"):
             return self._file(_safe(OUTPUTS, path.removeprefix("/media/")), ranged=True)
+        if path.startswith("/project-media/") and path.endswith(".png"):   # live previews of a render
+            return self._file(_safe(PROJECTS, path.removeprefix("/project-media/")))
         if path == "/api/options":
             return self._json(options())
         if path == "/api/voices":
-            return self._json({"voices": list_voices(), "missing": engine.missing()})
+            return self._json({"voices": list_voices(), "missing": engine.missing(),
+                               "expressive": speech.available()})
         if path == "/api/template":
             return self._json({"script": yaml.safe_load((EXAMPLES / "script_template.yaml").read_text())})
         if path == "/api/library":
@@ -236,7 +270,7 @@ class Handler(BaseHTTPRequestHandler):
             job = runner.latest()
             return self._json({"job": job.to_dict() if job else None})
         if m := re.fullmatch(r"/api/jobs/(\w+)", path):
-            job = runner.jobs.get(m.group(1))
+            job = runner.get(m.group(1))
             return self._json({"job": job.to_dict()}) if job else self._json({"error": "no such job"}, 404)
         if m := re.fullmatch(r"/api/import/(\w+)", path):
             task = imports.get(m.group(1))
@@ -264,10 +298,15 @@ class Handler(BaseHTTPRequestHandler):
             text = yaml.safe_dump(body.get("script") or {}, sort_keys=False, allow_unicode=True, width=100)
             return self._json({"yaml": text})
         if path == "/api/voices/preview":
+            text = body.get("text") or "Hello there, nice to meet you."
+            voice, emotion = body.get("voice") or "auto", body.get("emotion") or "neutral"
             try:
-                wav = engine.preview(body.get("text") or "Hello there.", body.get("voice") or "af_heart",
-                                     body.get("emotion") or "neutral")
-            except VoiceUnavailable as e:
+                if speech.available() and not is_kokoro_id(voice):
+                    wav = speaker.preview(text, voice, emotion)
+                else:   # fast voices: Kokoro can't perform [laugh]-style tags
+                    fallback = voice if is_kokoro_id(voice) else "af_heart"
+                    wav = engine.preview(strip_tags(text), fallback, emotion)
+            except (VoiceUnavailable, RuntimeError) as e:
                 return self._json({"error": str(e)}, 503)
             return self._send(200, wav, "audio/wav")
         if path == "/api/jobs":
@@ -276,8 +315,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(result, 400)
             if problem := engine.missing():
                 return self._json({"ok": False, "errors": [{"where": "", "message": problem}]}, 503)
-            mode = "storyboard" if body.get("mode") == "storyboard" else "full"
-            return self._json({"job": runner.submit(script, body["script"], mode).to_dict()})
+            if runner.active() or runner.latest() and runner.latest().external and runner.latest().status == "running":
+                return self._json({"ok": False, "errors": [{"where": "", "message":
+                                   "Another episode is being made right now. Wait for it to finish."}]}, 409)
+            return self._json({"job": runner.submit(script, body["script"]).to_dict()})
         if path == "/api/import":
             text = (body.get("text") or "").strip()
             if not text:

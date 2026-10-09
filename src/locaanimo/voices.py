@@ -74,22 +74,95 @@ def voice_ids() -> set[str]:
     return {v["id"] for v in list_voices()}
 
 
+NARRATOR_VOICE = "warm, rich mature storyteller voice, clear and expressive"
+AGE_GENDER = {
+    ("child", "male"): "young boy", ("child", "female"): "young girl", ("child", "neutral"): "young child",
+    ("teen", "male"): "teenage boy", ("teen", "female"): "teenage girl", ("teen", "neutral"): "teenager",
+    ("adult", "male"): "adult man", ("adult", "female"): "adult woman", ("adult", "neutral"): "adult",
+    ("elder", "male"): "old man", ("elder", "female"): "old woman", ("elder", "neutral"): "elderly person",
+}
+# One distinguishing trait per auto-described character, so voices in a cast differ.
+TRAITS = ["warm and friendly", "bright and lively", "husky and relaxed", "crisp and clear",
+          "gentle and soft-spoken", "deep and steady", "quick and energetic", "smooth and calm"]
+
+
+def is_kokoro_id(voice: str) -> bool:
+    return voice in voice_ids()
+
+
+def describe_voice(c: Character, index: int = 0) -> str:
+    """The voice description a character uses: theirs, or one built from age and gender."""
+    if c.voice and c.voice != "auto":
+        return c.voice
+    return f"{AGE_GENDER[(c.age, c.gender)]}, {TRAITS[index % len(TRAITS)]}"
+
+
 def cast_voices(characters: list[Character], narrator: str = "auto") -> tuple[dict[str, str], str]:
-    """Give every character a distinct voice; explicit choices are kept as-is."""
+    """Every character's voice spec: a description for the expressive engine, or a Kokoro
+    voice id when the script names one. Used for rendering and shown in the studio."""
+    cast = {c.id: describe_voice(c, i) for i, c in enumerate(characters)}
+    return cast, (narrator if narrator and narrator != "auto" else NARRATOR_VOICE)
+
+
+def kokoro_cast(characters: list[Character], narrator: str = "auto") -> tuple[dict[str, str], str]:
+    """Fallback casting with Kokoro's preset voices: distinct per character."""
     available = voice_ids()
-    used = {c.voice for c in characters if c.voice != "auto"}
+    used = {c.voice for c in characters if c.voice in available}
     cast = {}
     for c in characters:
-        if c.voice != "auto":
+        if c.voice in available:
             cast[c.id] = c.voice
             continue
         pool = [v for v in CASTING.get((c.gender, c.age), NEUTRAL) if v in available]
         pick = next((v for v in pool if v not in used), pool[0] if pool else "af_heart")
         cast[c.id] = pick
         used.add(pick)
-    if narrator == "auto":
+    if narrator not in available:
         narrator = next((v for v in NARRATORS if v not in used and v in available), NARRATORS[0])
     return cast, narrator
+
+
+def synth_lines(lines: list[dict], work_dir, log=print) -> list[np.ndarray]:
+    """Speak every line of an episode, in order. Each line: {"text", "voice", "emotion",
+    "fallback"} where voice is a description (expressive engine) or a Kokoro id, and
+    fallback is the Kokoro voice to use if the expressive engine can't. Returns 24 kHz audio."""
+    import json
+    import subprocess
+    import sys
+    from . import speech
+    from .paths import ROOT
+    from .schema import strip_tags
+
+    out: list[np.ndarray | None] = [None] * len(lines)
+    expressive = [i for i, l in enumerate(lines) if not is_kokoro_id(l["voice"])]
+    if expressive and speech.available():
+        work = work_dir / "voices"
+        work.mkdir(parents=True, exist_ok=True)
+        jobs = [{"id": str(i), "text": lines[i]["text"], "voice": lines[i]["voice"],
+                 "emotion": lines[i]["emotion"], "out": str(work / f"line_{i:03d}.wav")} for i in expressive]
+        (work / "jobs.json").write_text(json.dumps({"lines": jobs}, indent=2))
+        proc = subprocess.Popen([sys.executable, "-m", "locaanimo.speech", "batch", str(work / "jobs.json")],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                env={**os.environ, "PYTHONPATH": str(ROOT / "src")})
+        for msg in proc.stdout:
+            if msg.startswith("speech:") and "ALL DONE" not in msg:
+                log(f"render: {msg.strip()}")
+        proc.wait()
+        results_file = work / "results.json"
+        results = json.loads(results_file.read_text()) if results_file.exists() else {}
+        for job in jobs:
+            if results.get(job["id"], {}).get("ok"):
+                audio, sr = sf.read(job["out"], dtype="float32")
+                out[int(job["id"])] = audio if audio.ndim == 1 else audio.mean(axis=1)
+        if any(out[i] is None for i in expressive):
+            log("render: some lines couldn't use expressive voices; those use the fast voices")
+    elif expressive:
+        log("render: expressive voice models not downloaded; using the fast voices (Kokoro)")
+    for i, l in enumerate(lines):   # Kokoro for named Kokoro voices and anything that failed
+        if out[i] is None:
+            voice = l["voice"] if is_kokoro_id(l["voice"]) else l["fallback"]
+            out[i] = engine.synth(strip_tags(l["text"]), voice, EMOTION_SPEED.get(l["emotion"], 1.0))
+    return out
 
 
 class VoiceEngine:

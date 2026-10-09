@@ -231,6 +231,7 @@ label.field-label { display: block; font-size: 11.5px; font-weight: 600; color: 
 .guide pre { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; font: 12px/1.55 ui-monospace, "SF Mono", Menlo, monospace; overflow: auto; margin: 0; }
 
 /* library */
+.lib-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .library { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
 .ep { overflow: hidden; cursor: pointer; transition: transform .15s; }
 .ep:hover { transform: translateY(-2px); }
@@ -251,12 +252,18 @@ label.field-label { display: block; font-size: 11.5px; font-weight: 600; color: 
 }
 .dock-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; }
 .dock-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dock-msg { padding: 0 16px; color: var(--muted); font-size: 13px; display: flex; justify-content: space-between; }
-.progress { height: 6px; margin: 10px 16px 12px; background: var(--panel-2); border-radius: 99px; overflow: hidden; }
+.dock-msg { padding: 0 16px; color: var(--muted); font-size: 12.5px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.dock-msg .dock-total { flex-basis: 100%; text-align: right; margin-top: -2px; }
+.dock-now { padding: 0 16px; font-size: 13.5px; font-weight: 550; color: var(--text); }
+.dock-head .tag { font-size: 10.5px; font-weight: 650; color: var(--muted); background: var(--panel-2); border-radius: 5px; padding: 2px 6px; }
+.dock-preview { position: relative; margin: 0 16px 10px; aspect-ratio: 16 / 9; border-radius: 10px; background: var(--panel-2) center / contain no-repeat; border: 1px solid var(--line); }
+.dock-preview span { position: absolute; left: 8px; top: 8px; font-size: 10.5px; font-weight: 650; color: #fff; background: rgba(0,0,0,.55); border-radius: 5px; padding: 2px 6px; }
+.dock.collapsed .dock-preview { display: none; }
+.progress { height: 6px; margin: 8px 16px 8px; background: var(--panel-2); border-radius: 99px; overflow: hidden; }
 .progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 99px; transition: width .4s; }
 .dock.done .progress i { background: var(--ok); }
 .dock.failed .progress i { background: var(--bad); }
-.stages { list-style: none; margin: 0; padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
+.stages { list-style: none; margin: 10px 0 0; padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
 .stages li { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; }
 .stages .st { width: 16px; height: 16px; border-radius: 50%; flex: none; margin-top: 1px; display: grid; place-items: center; border: 1.5px solid var(--line-strong); }
 .stages .done .st { background: var(--ok); border-color: var(--ok); }
@@ -352,3 +359,23 @@ input[type=text]:focus, input[type=number]:focus, select:focus, textarea.field:f
 .progress i { background: var(--accent); }
 .dock { border-radius: 12px; box-shadow: 0 12px 32px rgba(16, 24, 40, .16); }
 .toast { border-radius: 8px; }
+
+/* voice field: describe the voice, preview it */
+.voice-field { display: flex; flex-direction: column; gap: 7px; }
+.voice-field textarea.field { min-height: 46px; }
+.voice-field .voice-pick { width: 100%; }
+.voice-actions { display: flex; align-items: flex-start; gap: 8px; }
+.say-voice {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; cursor: pointer;
+  border: 0; border-radius: 7px; padding: 5px 10px 5px 8px; background: var(--text); color: #fff;
+  font-size: 12.5px; font-weight: 600;
+}
+.say-voice svg { width: 11px; height: 11px; fill: #fff; stroke: none; }
+.say-voice.loading { opacity: .6; }
+.say-voice.playing { background: var(--accent); }
+.voice-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.voice-chips .chip { padding: 2px 8px; font-size: 11.5px; color: var(--muted); }
+.voice-chips .chip:hover { color: var(--accent); border-color: var(--accent); }
+.guide ul { margin: 0 0 10px; padding-left: 18px; }
+.guide li { margin-bottom: 3px; }
+.guide pre { white-space: pre-wrap; word-break: break-word; }

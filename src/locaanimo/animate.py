@@ -3,6 +3,11 @@
 Camera moves over depth-parallaxed background plates; characters are puppets that
 breathe, sway, walk in, bob while talking, lip-flap from their audio and blink.
 Character animation is held on twos (12 drawings/s) like TV anime; the camera runs on ones.
+
+The camera works like a TV-anime layout artist: most dialogue shots are held, moves are
+slow and constant-speed (no stop-and-go easing inside a shot), shot sizes and move types
+vary from cut to cut, and consecutive shots of the same framing continue the previous move
+instead of snapping back and starting over.
 """
 
 from __future__ import annotations
@@ -16,13 +21,18 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .schema import ActionBeat, CameraBeat, LineBeat, NarrationBeat, PauseBeat, Script
+from .schema import ActionBeat, CameraBeat, LineBeat, NarrationBeat, PauseBeat, Script, strip_tags
 
 FPS = 24
 W, H = 1280, 720
 WORLD_SCALE = 2.0          # background plates are upscaled 2x into "world" space
 VIEW_FRACTION = 0.9        # at zoom 1 the camera sees 90% of the plate width (room to move)
 CHAR_HEIGHT = 0.82         # cowboy-shot sprite height as a fraction of world height
+ZOOM_RATE = 0.018          # gentle push/pull: relative zoom change per second
+PAN_RATE = 0.022           # gentle pan: fraction of the plate width per second
+MAX_ZOOM_MOVE = 0.14       # a move never zooms more than this in one shot
+MAX_PAN_MOVE = 0.12        # ... or pans further than this fraction of the plate
+INTENSE = ("angry", "scared", "surprised", "determined", "amazed")
 GRADE = {"day": (1.0, 1.0, 1.0), "sunset": (1.05, 0.95, 0.86), "night": (0.72, 0.78, 0.98)}
 
 
@@ -91,13 +101,16 @@ class Shot:
     speaker: str | None = None
     audio: np.ndarray | None = None            # this shot's voice clip, for lip flap
     shake: float = 0.0
+    shake_hold: bool = False                   # keep shaking the whole shot (else a jolt that settles)
     speedlines: bool = False
     flash: bool = False
     pop: bool = False                          # quick zoom pop at the start (surprise)
     subtitle: str | None = None
     subtitle_name: str | None = None
-    parallax: float = 60.0                     # world px of near-vs-far drift over the shot
+    parallax: float = 0.0                      # world px of near-vs-far drift over the shot
     clip: np.ndarray | None = None             # real animation for this shot (AI action clip)
+    move: str = "hold"                         # hold | push | pull | pan | tilt | continue | dramatic
+    framing: str = ""                          # what the shot frames, to continue matching shots
 
 
 def _ease(t: float) -> float:
@@ -114,6 +127,53 @@ def _clamp_cam(plate: Plate, cx: float, cy: float, z: float) -> tuple[float, flo
     return cx, cy, z
 
 
+def _ease_out(t: float) -> float:
+    t = min(1.0, max(0.0, t))
+    return 1 - (1 - t) ** 3
+
+
+def _shake(t: float, local: float, amp: float, hold: bool) -> tuple[float, float]:
+    """Handheld-style shake: a few low sine waves instead of per-frame random jumps, so it
+    reads as camera weight, not video noise. Unless held, it is a jolt that settles."""
+    env = 1.0 if hold else math.exp(-local / 0.7)
+    x = math.sin(t * 31.0) * 0.6 + math.sin(t * 53.0 + 1.3) * 0.4
+    y = math.sin(t * 37.0 + 0.7) * 0.6 + math.sin(t * 47.0 + 2.1) * 0.4
+    return x * amp * env, y * amp * env
+
+
+def _move(plate: Plate, cam: tuple[float, float, float], kind: str, dur: float, sign: int = 1,
+          rate: float = 1.0) -> tuple[tuple, tuple]:
+    """(start, end) camera for a constant-speed move of `kind` that keeps `cam` as the
+    framing in the middle of the shot."""
+    cx, cy, z = cam
+    pw, ph = plate.size
+    if kind == "push" or kind == "pull":
+        dz = min(MAX_ZOOM_MOVE, ZOOM_RATE * rate * dur) / 2
+        a, b = (z * (1 - dz), z * (1 + dz))
+        if kind == "pull":
+            a, b = b, a
+        return _clamp_cam(plate, cx, cy, a), _clamp_cam(plate, cx, cy, b)
+    if kind == "pan":
+        d = min(MAX_PAN_MOVE, PAN_RATE * rate * dur) * pw / 2 * sign
+        return _clamp_cam(plate, cx - d, cy, z), _clamp_cam(plate, cx + d, cy, z)
+    if kind == "tilt":  # top to bottom: sky first, then the ground
+        d = min(MAX_PAN_MOVE, PAN_RATE * rate * dur) * ph / 2 * sign
+        return _clamp_cam(plate, cx, cy - d, z), _clamp_cam(plate, cx, cy + d, z)
+    c = _clamp_cam(plate, cx, cy, z)
+    return c, c
+
+
+def _continue(prev: "Shot", plate: Plate, dur: float) -> tuple[tuple, tuple]:
+    """Pick up exactly where the previous shot's camera ended, at the same speed, so a run of
+    matching shots plays as one unbroken move instead of a jump back and a restart."""
+    v = [(b - a) / max(1e-3, prev.dur) for a, b in zip(prev.cam0, prev.cam1)]
+    c0 = prev.cam1
+    end = [a + vi * dur for a, vi in zip(c0, v)]
+    # keep the whole run gentle: stop adding zoom once it has pushed in a lot
+    end[2] = min(end[2], c0[2] * (1 + MAX_ZOOM_MOVE / 2))
+    return c0, _clamp_cam(plate, *end)
+
+
 def _slots(n: int) -> list[float]:
     return {1: [0.5], 2: [0.34, 0.66], 3: [0.24, 0.5, 0.76]}.get(n, [0.15 + 0.7 * i / max(1, n - 1) for i in range(n)])
 
@@ -123,6 +183,7 @@ def plan(script: Script, assets: Assets, clips: list[tuple[np.ndarray | None, fl
     (audio, duration) in script order."""
     shots: list[Shot] = []
     t = 0.0
+    rng = random.Random(script.episode.title)       # same script → same camera choices
     audio_iter = iter(clips)
     hero_iter = iter(assets.heroes)
     anim_iter = iter(assets.clips)
@@ -139,10 +200,8 @@ def plan(script: Script, assets: Assets, clips: list[tuple[np.ndarray | None, fl
         slot = {cid: x * pw for cid, x in zip(order, _slots(max(1, len(order))))}
         present: list[str] = []
 
-        def wide(z0=1.0, z1=1.07, drift=0.04, p=plate):
-            w_ = p.size[0]
-            return (_clamp_cam(p, w_ * (0.5 - drift), p.size[1] * 0.5, z0),
-                    _clamp_cam(p, w_ * (0.5 + drift), p.size[1] * 0.5, z1))
+        def wide_cam(p, z=1.06):
+            return _clamp_cam(p, p.size[0] * 0.5, p.size[1] * 0.5, z)
 
         def stage(entering=(), gait=None):
             cast = []
@@ -154,70 +213,158 @@ def plan(script: Script, assets: Assets, clips: list[tuple[np.ndarray | None, fl
                     cast.append(OnStage(cid, slot[cid], slot[cid]))
             return cast
 
+        def head(cid):
+            sp = assets.sprites[cid]
+            char_h = ph * CHAR_HEIGHT
+            k = char_h / sp.states["base"].shape[0]
+            return (slot[cid] + (sp.head[0] - sp.states["base"].shape[1] / 2) * k,
+                    ph * 1.04 - char_h + sp.head[1] * k)
+
+        top = ph * 1.04 - ph * CHAR_HEIGHT          # world y of the top of every character's hair
+
+        def face_cam(hx, hy, z):
+            """Frame a face with the whole head in view: the eyes sit about a third of the way
+            down and the top of the hair always has headroom, even after a push-in (zoom out
+            if needed)."""
+            z = min(z, _max_zoom_for_headroom(hy))
+            vh = pw * VIEW_FRACTION / z * H / W
+            end_vh = vh / (1 + MAX_ZOOM_MOVE / 2)                        # the view after a push-in
+            cy = min(hy + (0.5 - 0.36) * vh, top - 0.05 * end_vh + end_vh / 2)
+            return _clamp_cam(plate, hx, cy, z)
+
+        def _max_zoom_for_headroom(hy):
+            """The tightest zoom that still fits from the top of the hair to just below the
+            face, with room to push in: big heads and tall hair get a wider shot."""
+            need = (hy - top) * 2.1 + 0.08 * ph               # hair top → a bit below the chin, plus margin
+            return max(1.0, pw * VIEW_FRACTION * H / W / max(1.0, need) / (1 + MAX_ZOOM_MOVE / 2))
+
+        first = True                                # establishing shot of the scene
+        said: set[str] = set()                      # who has spoken in this scene
         for beat in scene.beats:
             audio, dur = next(audio_iter)
             if isinstance(beat, PauseBeat):
                 if shots:
                     shots[-1].dur += dur
+                    if shots[-1].move not in ("hold", "dramatic"):  # stretch the move, same speed
+                        c0, c1 = shots[-1].cam0, shots[-1].cam1
+                        k = shots[-1].dur / max(1e-3, shots[-1].dur - dur)
+                        shots[-1].cam1 = _clamp_cam(shots[-1].plate, *(a + (b - a) * k for a, b in zip(c0, c1)))
                 t += dur
                 continue
+            prev = shots[-1] if shots else None
+            last_move = prev.move if prev else ""
+
+            def pick(options):
+                """A random move, but not the same non-hold move twice in a row."""
+                opts = [o for o in options if o == "hold" or o != last_move] or options
+                return rng.choice(opts)
 
             if isinstance(beat, LineBeat):
                 who = beat.line.who
                 if who not in present:
                     present.append(who)
-                sp = assets.sprites[who]
-                char_h = ph * CHAR_HEIGHT
-                k = char_h / sp.states["base"].shape[0]
-                head_x = slot[who] + (sp.head[0] - sp.states["base"].shape[1] / 2) * k
-                head_y = ph * 1.04 - char_h + sp.head[1] * k
-                z = 1.85
-                vh = pw * VIEW_FRACTION / z * H / W
-                cy = head_y + (0.5 - 0.36) * vh
                 emo = beat.line.emotion.value
-                push = 0.1 if emo in ("confident", "determined", "angry") or beat.line.gesture else 0.04
-                shot = Shot(t, dur, plate, scene.time, _clamp_cam(plate, head_x, cy, z),
-                            _clamp_cam(plate, head_x, cy, z + push), stage(), speaker=who, audio=audio,
-                            subtitle=beat.line.text, subtitle_name=names[who], parallax=25,
-                            pop=emo in ("surprised", "amazed", "scared"), shake=2.0 if emo == "angry" else 0.0)
+                hx, hy = head(who)
+                others = [c for c in present if c != who]
+                if prev and prev.speaker == who and prev.plate is plate and prev.clip is None:
+                    # same speaker keeps talking: no cut-and-restart, the shot just carries on
+                    c0, c1 = _continue(prev, plate, dur)
+                    move, framing, in_shot = "continue", prev.framing, [a.id for a in prev.cast]
+                else:
+                    if emo in INTENSE or beat.line.gesture:
+                        size, move = "close", "push"
+                    elif others and who in said and rng.random() < 0.3:
+                        size, move = "two", pick(["hold", "hold", "pan"])
+                    else:
+                        size = "close" if who in said else "medium"
+                        move = pick(["hold", "hold", "push", "pan"])
+                    if size == "two":
+                        partner = min(others, key=lambda c: abs(slot[c] - slot[who]))
+                        ox, oy = head(partner)
+                        z = min(1.6, max(1.0, pw * VIEW_FRACTION / (abs(ox - hx) * 2.2 + 1e-3)))
+                        cam = face_cam((hx + ox) / 2, (hy + oy) / 2, z)
+                        in_shot = [who, partner]
+                    else:
+                        cam = face_cam(hx, hy, 1.6 if size == "close" else 1.3)
+                        in_shot = [who]
+                    sign = rng.choice([1, -1])
+                    c0, c1 = _move(plate, cam, move, dur, sign, rate=1.8 if emo in INTENSE else 1.0)
+                    framing = f"{size}:{who}"
+                said.add(who)
+                # A single shows only the speaker and a two-shot only those two, like an anime
+                # layout: nobody else ever appears half-cut at the edge of the frame.
+                shot = Shot(t, dur, plate, scene.time, c0, c1, [a for a in stage() if a.id in in_shot],
+                            speaker=who, audio=audio,
+                            subtitle=strip_tags(beat.line.text), subtitle_name=names[who],
+                            pop=emo in ("surprised", "amazed", "scared") and move != "continue",
+                            shake=2.0 if emo == "angry" else 0.0, move=move, framing=framing)
             elif isinstance(beat, NarrationBeat):
-                c0, c1 = wide(1.04, 1.12)
-                shot = Shot(t, dur, plate if present else vista, scene.time, c0, c1, stage(),
-                            audio=None, subtitle=beat.narration, subtitle_name=None)
-                if not present:
-                    shot.cam0, shot.cam1 = wide(1.04, 1.12, p=vista)
+                p = plate if present else vista
+                if prev and prev.framing == "wide" and prev.plate is p and prev.clip is None:
+                    (c0, c1), move = _continue(prev, p, dur), "continue"
+                elif first:
+                    move = rng.choice(["pan", "tilt"])
+                    c0, c1 = _move(p, wide_cam(p, 1.12), move, dur, 1 if len(shots) % 2 == 0 else -1)
+                else:
+                    move = pick(["hold", "pan", "pull"])
+                    c0, c1 = _move(p, wide_cam(p, 1.08), move, dur, rng.choice([1, -1]))
+                shot = Shot(t, dur, p, scene.time, c0, c1, stage(), subtitle=beat.narration,
+                            subtitle_name=None, move=move, framing="wide")
             elif isinstance(beat, ActionBeat) and beat.big:
                 hero = next(hero_iter, None)
                 anim = next(anim_iter, None)
                 p = hero or plate
-                c0, c1 = wide(1.0, 1.32, 0.0, p)
+                c0, c1 = wide_cam(p, 1.0), wide_cam(p, 1.32)       # a deliberate dramatic punch-in
                 shot = Shot(t, dur, p, scene.time, c0, c1, [] if hero else stage(), shake=7.0,
-                            speedlines=anim is None, flash=True, parallax=120, clip=anim)
+                            speedlines=anim is None, flash=True, parallax=120, clip=anim,
+                            move="dramatic", framing="hero")
             elif isinstance(beat, ActionBeat):
                 entering = [c for c in beat.characters if c not in present]
                 present += entering
                 gait = "run" if any(w in beat.action.lower() for w in ("run", "rush", "dash", "sprint")) else "walk"
                 if present:
-                    c0, c1 = wide(1.02, 1.1)
-                    shot = Shot(t, dur, plate, scene.time, c0, c1, stage(entering, gait))
-                else:  # pure scenery action, e.g. "a giant wave rises"
-                    c0, c1 = wide(1.0, 1.22, 0.0, vista)
-                    shot = Shot(t, dur, vista, scene.time, c0, c1, shake=3.0, parallax=90)
+                    if entering:  # follow the newcomer in with a slow pan from their side
+                        sign = -1 if slot[entering[0]] < pw / 2 else 1
+                        move = "pan"
+                        c0, c1 = _move(plate, wide_cam(plate), move, dur, sign)
+                    elif prev and prev.framing == "wide" and prev.plate is plate and prev.clip is None:
+                        (c0, c1), move = _continue(prev, plate, dur), "continue"
+                    else:
+                        move = pick(["hold", "push"])
+                        c0, c1 = _move(plate, wide_cam(plate), move, dur)
+                    shot = Shot(t, dur, plate, scene.time, c0, c1, stage(entering, gait), move=move, framing="wide")
+                else:  # pure scenery action, e.g. "a giant wave rises": a fast, deliberate push
+                    c0, c1 = wide_cam(vista, 1.0), wide_cam(vista, 1.22)
+                    shot = Shot(t, dur, vista, scene.time, c0, c1, shake=3.0, parallax=90,
+                                move="dramatic", framing="scenery")
                 cam = beat.camera.value if beat.camera else None
                 if cam == "low_angle":
                     p = shot.plate
                     shot.cam0 = _clamp_cam(p, p.size[0] / 2, p.size[1] * 0.7, 1.15)
                     shot.cam1 = _clamp_cam(p, p.size[0] / 2, p.size[1] * 0.45, 1.3)
-            else:  # CameraBeat
+                    shot.move = "tilt"
+            else:  # CameraBeat: the script asked for this move, so it's allowed to be bigger
                 cam = beat.camera.value
                 p = plate if present else vista
-                c0, c1 = wide(1.0, 1.08, 0.06, p)
+                c = wide_cam(p, 1.04)
                 if cam in ("zoom_in", "close_up"):
-                    c1 = _clamp_cam(p, c1[0], c1[1], 1.5)
-                elif cam == "pan_left":
-                    c0, c1 = c1, c0
-                shot = Shot(t, dur, p, scene.time, c0, c1, stage(), shake=4.0 if cam == "shake" else 0.0)
+                    c0, c1, move = c, _clamp_cam(p, c[0], c[1], 1.5), "dramatic"
+                elif cam in ("pan_left", "pan_right"):
+                    d = 0.08 * p.size[0] * (-1 if cam == "pan_left" else 1)
+                    c0, c1, move = _clamp_cam(p, c[0] - d, c[1], c[2]), _clamp_cam(p, c[0] + d, c[1], c[2]), "pan"
+                elif cam == "shake":
+                    c0, c1, move = c, c, "hold"
+                else:  # establishing, wide, high angle…: a calm look around the place
+                    move = pick(["pan", "tilt"]) if cam == "establishing" else pick(["hold", "pan", "pull"])
+                    c0, c1 = _move(p, c, move, dur, rng.choice([1, -1]))
+                shot = Shot(t, dur, p, scene.time, c0, c1, stage(), shake=4.0 if cam == "shake" else 0.0,
+                            shake_hold=cam == "shake", move=move, framing=f"camera:{cam}")
 
+            if shot.move in ("pan", "continue") and shot.clip is None and not shot.parallax:
+                # depth parallax only follows real sideways camera travel: near things slide
+                # past faster than far ones. Held shots and zooms don't make the background swim.
+                shot.parallax = 0.35 * (shot.cam1[0] - shot.cam0[0]) / WORLD_SCALE
+            first = False
             shots.append(shot)
             t += dur
     return shots
@@ -252,14 +399,16 @@ class Renderer:
         local = t_abs - shot.start
         if shot.clip is not None:
             return self._clip_frame(shot, t_abs, local)
-        u = _ease(local / max(1e-3, shot.dur))
+        # constant speed: the camera is already moving when we cut in and still moving when
+        # we cut out, like a real camera move (only the script's dramatic beats ease)
+        lin = min(1.0, max(0.0, local / max(1e-3, shot.dur)))
+        u = _ease(lin) if shot.move == "dramatic" else lin
         cx, cy, z = (a + (b - a) * u for a, b in zip(shot.cam0, shot.cam1))
-        if shot.pop:  # punch-in on surprise: start wider, snap in over 0.25 s
-            z *= 1 - 0.12 * max(0.0, 1 - local / 0.25)
+        if shot.pop:  # punch-in on surprise: start wider, snap in fast and settle softly
+            z *= 1 - 0.1 * (1 - _ease_out(local / 0.35))
         if shot.shake:
-            step = int(t_abs * FPS)
-            jitter = np.random.default_rng(step).normal(0, shot.shake, 2) * WORLD_SCALE
-            cx, cy = cx + jitter[0], cy + jitter[1]
+            jx, jy = _shake(t_abs, local, shot.shake * WORLD_SCALE, shot.shake_hold)
+            cx, cy = cx + jx, cy + jy
 
         p = shot.plate
         pw, ph = p.size
@@ -267,7 +416,7 @@ class Renderer:
         sx = (cx + self.gx * scale).astype(np.float32)   # remap needs float32 maps
         sy = (cy + self.gy * scale).astype(np.float32)
         d = cv2.remap(p.depth, sx, sy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-        drift = (u - 0.5) * shot.parallax * WORLD_SCALE
+        drift = np.float32((u - 0.5) * shot.parallax * WORLD_SCALE)
         img = cv2.remap(p.rgb, sx + (d - 0.5) * drift, sy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
 
         t2 = math.floor(t_abs * 12) / 12             # puppets animate on twos
@@ -287,8 +436,8 @@ class Renderer:
         """Real animation: play the clip (held on its last frame if the shot runs longer)
         with a slow push-in, a light shake and the impact flash."""
         idx = min(int(local * FPS), len(shot.clip) - 1)
-        z = 1.0 + 0.06 * _ease(local / max(1e-3, shot.dur))
-        jitter = np.random.default_rng(int(t_abs * FPS)).normal(0, 2.0, 2) if local < 1.2 else (0, 0)
+        z = 1.0 + 0.06 * min(1.0, local / max(1e-3, shot.dur))
+        jitter = _shake(t_abs, local, 2.0, False)
         M = np.array([[z, 0, (1 - z) * W / 2 + jitter[0]], [0, z, (1 - z) * H / 2 + jitter[1]]], np.float32)
         img = cv2.warpAffine(shot.clip[idx], M, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
         img *= self.vignette

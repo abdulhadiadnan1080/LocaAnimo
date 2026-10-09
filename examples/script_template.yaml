@@ -28,14 +28,14 @@ characters:
     look: "teenage boy, messy black hair, orange hoodie, blue eyes, slim build"
     age: teen                # child | teen | adult | elder
     gender: male             # male | female | neutral
-    voice: auto              # auto, or a Kokoro voice id like am_adam (optional)
+    voice: "teenage boy, bright and cocky, talks fast"   # describe the voice, or auto
 
   - id: mira
     name: Mira
     look: "teenage girl, long silver hair in a ponytail, white surf jacket, green eyes"
     age: teen
     gender: female
-    voice: auto
+    voice: "teenage girl, warm but worried, a little breathless"
 
 locations:
   - id: beach
@@ -70,7 +70,7 @@ scenes:
       - action: "Kai paddles hard, then leaps up and rides the giant wave, spray flying"
         characters: [kai]
         big: true             # AI-generated motion for this moment (keep these rare: 4-6 per 10 min)
-      - line: { who: mira, text: "He's actually doing it!", emotion: amazed }
+      - line: { who: mira, text: "He's actually doing it! [laugh]", emotion: amazed }
       - pause: 1.0
 
 # ---------------------------------------------------------------

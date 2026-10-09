@@ -38,7 +38,6 @@
       <header class="topbar">
         <input id="title" class="title-input" placeholder="Untitled episode" spellcheck="false" autocomplete="off">
         <button id="status" class="pill" type="button">Checking…</button>
-        <button id="storyboard" class="ghost" type="button" title="Quick animatic: storyboard cards with the real voices, in seconds">Storyboard</button>
         <button id="create" class="primary" type="button" title="Full episode: art, animation, AI action shots, review (about 15–20 min)">
           <svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg>
           <span>Create episode</span>
@@ -55,7 +54,7 @@
           </div>
 
           <div class="section">
-            <div class="section-head"><h2>Cast</h2><p>Describe each look in short tags. Hover a voice to hear it.</p></div>
+            <div class="section-head"><h2>Cast</h2><p>Describe how each one looks and sounds, then press Preview to hear the voice.</p></div>
             <div id="cast" class="grid"></div>
           </div>
 
@@ -121,7 +120,14 @@
         </section>
 
         <section id="view-library" class="view">
-          <div class="section-head"><h2>Library</h2><p>Every episode you've made, saved in the <code>outputs/</code> folder.</p></div>
+          <div class="section-head lib-head">
+            <div><h2>Library</h2><p>Every episode you've made, saved in the <code>outputs/</code> folder.</p></div>
+            <div class="seg" id="lib-sort" title="Sort episodes">
+              <button type="button" data-sort="newest">Newest</button>
+              <button type="button" data-sort="oldest">Oldest</button>
+              <button type="button" data-sort="title">A–Z</button>
+            </div>
+          </div>
           <div id="library" class="library"></div>
         </section>
       </div>
